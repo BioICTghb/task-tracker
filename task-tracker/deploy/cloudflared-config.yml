@@ -1,0 +1,9 @@
+# /etc/cloudflared/config.yml
+# Replace <TUNNEL_ID> and the hostname with your own (see DEPLOY.md step 5).
+tunnel: tasktracker
+credentials-file: /etc/cloudflared/<TUNNEL_ID>.json
+
+ingress:
+  - hostname: tasks.example.com        # <-- your chosen subdomain
+    service: http://127.0.0.1:5000
+  - service: http_status:404

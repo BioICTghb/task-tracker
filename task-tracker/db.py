@@ -16,9 +16,13 @@ IS_SQLITE = Config.DB_BACKEND == "sqlite"
 def _sqlite_connect():
     import sqlite3
 
-    conn = sqlite3.connect(Config.SQLITE_PATH)
+    conn = sqlite3.connect(Config.SQLITE_PATH, timeout=10)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
+    # Production hardening: WAL lets readers and the writer work concurrently,
+    # busy_timeout waits briefly instead of erroring if another worker is writing.
+    conn.execute("PRAGMA journal_mode = WAL")
+    conn.execute("PRAGMA busy_timeout = 5000")
     return conn
 
 
