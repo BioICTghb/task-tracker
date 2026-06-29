@@ -1,0 +1,228 @@
+============================================================
+   TASK TRACKER - SETUP GUIDE FOR FIELD TESTING
+   Written for someone who has never used a computer.
+   Just follow the steps in order. Take your time.
+============================================================
+
+WHAT YOU WILL DO
+----------------
+1. Install one free program called "Python" (one time only).
+2. Start the Task Tracker by double-clicking a file.
+3. Get a web link and open it on the technicians' phones.
+4. Add the app to each phone's home screen.
+That is everything.
+
+WHAT YOU NEED
+-------------
+- This computer (a Windows computer).
+- Internet on the computer for the setup, and to first open
+  the app on the phones. (Once the app is on a phone, it also
+  works WITHOUT internet - that is the whole point of it.)
+- The phones the technicians will use.
+
+
+============================================================
+STEP 1 - INSTALL PYTHON  (do this only once)
+============================================================
+
+"Python" is the engine that runs the Task Tracker.
+
+1. Open the program called "Edge" or "Chrome" (the internet
+   browser). It is usually a blue or coloured circle icon at
+   the bottom of the screen.
+
+2. Click in the white bar at the very top, type this address
+   exactly, and press the ENTER key:
+
+        python.org/downloads
+
+3. Click the big yellow button that says
+   "Download Python" (a number like 3.12 will be next to it).
+
+4. At the bottom of the screen a file will appear. Click it
+   to open it. A window opens.
+
+5. ***VERY IMPORTANT***  At the BOTTOM of that window there is
+   a small square (a "tick box") next to the words:
+
+        "Add python.exe to PATH"
+
+   CLICK that box so it gets a check mark. Do not skip this.
+
+6. Now click "Install Now". Wait until it says "Setup was
+   successful", then click "Close".
+
+Python is now installed. You never have to do Step 1 again.
+
+
+============================================================
+STEP 2 - START THE TASK TRACKER  (each time you test)
+============================================================
+
+1. Find the Task Tracker folder on the computer. Inside it
+   there is a file named:
+
+        start.bat
+
+   (It may just show as "start" with a little gear icon.)
+
+2. DOUBLE-CLICK it (click it quickly two times).
+
+3. A black window opens with white writing. The first time it
+   will say "Setting up..." and take a few minutes. This is
+   normal - just wait.
+
+4. When it is ready you will see:
+
+        "The Task Tracker is now RUNNING."
+
+   LEAVE THIS BLACK WINDOW OPEN. If you close it, the app stops.
+
+   * If instead it says Python is not installed, go back and
+     do STEP 1, then try again.
+
+
+============================================================
+STEP 3 - GET THE PHONE LINK
+============================================================
+
+1. In the same Task Tracker folder, find the file named:
+
+        share.bat
+
+2. DOUBLE-CLICK it. A second black window opens.
+
+   * The first time, Windows may show a blue box saying
+     "Windows protected your PC". If it does:
+     click "More info", then click "Run anyway".
+     (The tool is safe - this box just appears for new files.)
+
+3. After a few seconds, a web address appears in the window.
+   It looks like this (your words will be different):
+
+        https://brave-tiger-1234.trycloudflare.com
+
+4. Write this address down carefully, or take a photo of the
+   screen with your phone. You will type it into the phones.
+
+   LEAVE THIS SECOND BLACK WINDOW OPEN TOO.
+
+
+============================================================
+STEP 4 - PUT THE APP ON A PHONE
+============================================================
+
+Do this on EACH technician's phone.
+
+ON AN ANDROID PHONE (Samsung, etc.):
+  1. Open the "Chrome" browser app.
+  2. In the address bar at the top, type the web address from
+     Step 3 exactly, then add  /tech  at the end. Example:
+        https://brave-tiger-1234.trycloudflare.com/tech
+     Press Go / Enter.
+  3. The "My Tasks" page appears.
+  4. Tap the three dots (...) in the top-right corner.
+  5. Tap "Add to Home screen" (or "Install app"). Tap "Add".
+  6. The app icon now sits on the phone's home screen like any
+     other app. Open it from there.
+
+ON AN iPHONE:
+  1. Open the "Safari" browser app (the blue compass icon).
+  2. In the address bar, type the web address plus  /tech
+     and press Go.
+  3. Tap the "Share" button at the bottom (a square with an
+     arrow pointing up).
+  4. Scroll down and tap "Add to Home Screen", then "Add".
+  5. Open the app from the home screen icon.
+
+
+============================================================
+STEP 5 - HOW THE TECHNICIANS USE IT
+============================================================
+
+- The MANAGER opens the same web address (without /tech) on a
+  phone or computer, pastes the task list (one task per line),
+  and taps "PUBLISH TASKS".
+
+- Each TECHNICIAN opens the app, taps a task, taps
+  "TAKE BEFORE PHOTO" to start, and "TAKE AFTER PHOTO" when
+  finished. The phone's camera opens automatically.
+
+- A coloured bar at the top shows the connection:
+     GREEN  = ONLINE   (everything saved to the computer)
+     GREY   = OFFLINE  (photos are saved ON THE PHONE)
+     ORANGE = SYNCING  (sending saved photos now)
+
+- If there is no signal, the technician keeps working anyway.
+  When the phone gets signal again, the photos send by
+  themselves. Nobody has to press anything.
+
+
+============================================================
+STEP 6 - STOPPING AT THE END OF THE DAY
+============================================================
+
+Simply close the two black windows (click the X in the corner
+of each). That stops the app and the phone link.
+
+To test again another day, just start from STEP 2.
+
+
+============================================================
+IF SOMETHING DOES NOT WORK
+============================================================
+
+"The black window closed by itself."
+   Python is probably not installed. Do STEP 1 again, making
+   sure you ticked "Add python.exe to PATH".
+
+"The phone says the page cannot be reached."
+   Make sure BOTH black windows are still open on the computer,
+   and that you typed the web address exactly, including the
+   https:// at the start.
+
+"The phone link changed since yesterday."
+   The free link can change each time you run share.bat. Just
+   share the NEW link and add the app to the phone again. (Ask
+   your IT person for a permanent link if this is annoying.)
+
+"share.bat did not give me a web address / nothing happened."
+   This almost always means the company network is blocking
+   the download. Try ONE of these:
+   - Run share.bat again - it now tries a second method and
+     will print a clear message if it cannot connect.
+   - Connect the computer to a phone's hotspot or a home WiFi
+     (not the company WiFi) and run share.bat again. Once the
+     app is added to the phones, you can switch back.
+   - If it says "COULD NOT GET A PHONE LINK", ask your IT
+     person to allow "cloudflared" and "github.com", or to
+     set up the local-network method below.
+
+"I want to start fresh and erase the test tasks/photos."
+   Ask your IT person to delete the files "dev.db" and the
+   "uploads" folder inside the Task Tracker folder.
+
+
+============================================================
+FOR THE IT PERSON - LOCAL NETWORK METHOD (no internet)
+============================================================
+If the company network blocks the phone link above, serve the
+app inside the LAN instead. The app's offline/install features
+need HTTPS with a certificate the phones trust, so:
+
+  1. Run the app on all interfaces, e.g. with waitress:
+        waitress-serve --listen=0.0.0.0:5000 app:app
+  2. Put an HTTPS reverse proxy in front (Caddy with
+        "tls internal", or nginx with an internal-CA cert).
+  3. Install that root certificate on each test phone.
+  4. Open https://<server-name-or-ip>/tech on the phones and
+     Add to Home Screen.
+Full details are in README.md, section 4 (Deployment).
+
+Quick functional check only (NO offline, NO install): you can
+also open http://<computer-ip>:5000/tech directly over the LAN
+after starting with --listen=0.0.0.0:5000 and allowing the port
+in Windows Firewall. The app will work while online but will
+not install or work offline over plain http.
+
+============================================================

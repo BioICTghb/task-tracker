@@ -1,0 +1,59 @@
+/* Big, glove-friendly touch targets */
+.big-btn {
+  font-size: 1.5rem;
+  font-weight: 700;
+  padding: 1.5rem 1rem;
+  border-radius: 1rem;
+  letter-spacing: 0.5px;
+}
+
+.task-card .task-title { font-size: 1.25rem; font-weight: 600; }
+.task-card { transition: transform .05s; }
+.task-card:active { transform: scale(0.99); }
+
+/* Connection status banner */
+.net-status {
+  text-align: center;
+  font-weight: 700;
+  font-size: .9rem;
+  padding: .35rem;
+  letter-spacing: 1px;
+  color: #fff;
+}
+.net-online  { background: #198754; }
+.net-offline { background: #6c757d; }
+.net-syncing { background: #fd7e14; }
+
+/* Report */
+.report-thumb { max-width: 120px; max-height: 120px; object-fit: cover; }
+
+/* Photos page */
+.photo-full {
+  width: 100%;
+  height: auto;
+  border-radius: .5rem;
+  border: 1px solid #dee2e6;
+}
+.photo-missing {
+  display: flex; align-items: center; justify-content: center;
+  height: 120px; border: 1px dashed #ced4da; border-radius: .5rem;
+  color: #adb5bd; font-size: .9rem;
+}
+
+/* Printing */
+.print-only { display: none; }
+@media print {
+  .no-print { display: none !important; }
+  .net-status { display: none !important; }
+  .print-only { display: block; }
+  .report-thumb { max-width: 90px; max-height: 90px; }
+  a { text-decoration: none; color: inherit; }
+
+  /* Photos print after the report table, starting on a fresh page */
+  .print-photos { page-break-before: always; }
+  .photo-card { page-break-inside: avoid; }
+  .photo-full { max-height: 8cm; width: auto; }
+
+  /* Make sure photos/colours actually print */
+  * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+}

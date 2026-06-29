@@ -1,0 +1,9 @@
+__pycache__/
+*.pyc
+.env
+dev.db
+cloudflared.exe
+venv/
+.venv/
+uploads/*
+!uploads/.gitkeep

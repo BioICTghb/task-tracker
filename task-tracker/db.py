@@ -1,0 +1,111 @@
+"""
+Database helper. Two backends:
+  - mysql  (production, default) via PyMySQL
+  - sqlite (zero-setup local dev/testing) via stdlib sqlite3
+
+Backend is chosen by Config.DB_BACKEND. The app uses %s placeholders and dict
+rows for both; for sqlite we translate placeholders and use a Row factory.
+"""
+from flask import g
+from config import Config
+
+IS_SQLITE = Config.DB_BACKEND == "sqlite"
+
+
+# --------------------------------------------------------------------- sqlite
+def _sqlite_connect():
+    import sqlite3
+
+    conn = sqlite3.connect(Config.SQLITE_PATH)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys = ON")
+    return conn
+
+
+def _sqlite_init_schema(conn):
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS tasks (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          title TEXT NOT NULL,
+          status TEXT NOT NULL DEFAULT 'open',
+          created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          started_at TIMESTAMP,
+          completed_at TIMESTAMP
+        );
+        CREATE TABLE IF NOT EXISTS task_photos (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          task_id INTEGER NOT NULL,
+          photo_type TEXT NOT NULL,
+          file_path TEXT NOT NULL,
+          timestamp TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          UNIQUE (task_id, photo_type),
+          FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE
+        );
+        """
+    )
+    conn.commit()
+
+
+# ---------------------------------------------------------------------- mysql
+def _mysql_connect():
+    import pymysql
+
+    return pymysql.connect(
+        host=Config.DB_HOST,
+        port=Config.DB_PORT,
+        user=Config.DB_USER,
+        password=Config.DB_PASSWORD,
+        database=Config.DB_NAME,
+        charset="utf8mb4",
+        cursorclass=pymysql.cursors.DictCursor,
+        autocommit=False,
+    )
+
+
+# --------------------------------------------------------------------- shared
+def get_db():
+    if "db" not in g:
+        g.db = _sqlite_connect() if IS_SQLITE else _mysql_connect()
+    return g.db
+
+
+def close_db(exc=None):
+    db = g.pop("db", None)
+    if db is not None:
+        db.close()
+
+
+def _prep(sql):
+    # sqlite uses ? placeholders; the app writes %s everywhere
+    return sql.replace("%s", "?") if IS_SQLITE else sql
+
+
+def query(sql, args=None, one=False):
+    db = get_db()
+    cur = db.cursor()
+    cur.execute(_prep(sql), args or ())
+    rows = cur.fetchall()
+    if IS_SQLITE:
+        rows = [dict(r) for r in rows]
+    cur.close()
+    return (rows[0] if rows else None) if one else rows
+
+
+def execute(sql, args=None):
+    """Run a write statement, commit, return lastrowid."""
+    db = get_db()
+    cur = db.cursor()
+    cur.execute(_prep(sql), args or ())
+    last_id = cur.lastrowid
+    db.commit()
+    cur.close()
+    return last_id
+
+
+def init_app(app):
+    app.teardown_appcontext(close_db)
+    if IS_SQLITE:
+        conn = _sqlite_connect()
+        _sqlite_init_schema(conn)
+        conn.close()

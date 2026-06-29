@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}Photos — {{ date }}{% endblock %}
+
+{% block content %}
+<div class="d-flex flex-wrap justify-content-between align-items-center mb-3 no-print">
+  <h1 class="h3 mb-0">Photos</h1>
+  <form method="get" class="d-flex gap-2">
+    <input type="date" name="date" value="{{ date }}" class="form-control">
+    <button class="btn btn-primary">View</button>
+    <a class="btn btn-outline-secondary" href="/report?date={{ date }}">Report</a>
+    <button type="button" class="btn btn-outline-secondary" onclick="window.print()">Print / PDF</button>
+  </form>
+</div>
+
+<h2 class="h5 mb-3 print-only">Photos — {{ date }}</h2>
+
+{% if not tasks %}
+  <div class="alert alert-info">No photos for {{ date }}.</div>
+{% else %}
+  {% include "_photo_cards.html" %}
+{% endif %}
+{% endblock %}

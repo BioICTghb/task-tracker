@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% block title %}Report — {{ date }}{% endblock %}
+
+{% block content %}
+<div class="d-flex flex-wrap justify-content-between align-items-center mb-3 no-print">
+  <h1 class="h3 mb-0">Report</h1>
+  <form method="get" class="d-flex gap-2">
+    <input type="date" name="date" value="{{ date }}" class="form-control">
+    <button class="btn btn-primary">View</button>
+    <a class="btn btn-outline-primary" href="/photos?date={{ date }}">Photos</a>
+    <button type="button" class="btn btn-outline-secondary" onclick="window.print()">Print / PDF</button>
+  </form>
+</div>
+
+<h2 class="h5 mb-3 print-only">Task Report — {{ date }}</h2>
+
+{% if not tasks %}
+  <div class="alert alert-info">No tasks for {{ date }}.</div>
+{% else %}
+<table class="table table-bordered align-middle report-table">
+  <thead class="table-light">
+    <tr>
+      <th>ID</th><th>Title</th><th>Status</th>
+      <th>Started</th><th>Completed</th><th>Duration</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for t in tasks %}
+    <tr>
+      <td><a href="/photos?date={{ date }}#job-{{ t.id }}">{{ t.id }}</a></td>
+      <td>{{ t.title }}</td>
+      <td>{{ t.status }}</td>
+      <td>{{ t.started_at or "—" }}</td>
+      <td>{{ t.completed_at or "—" }}</td>
+      <td>
+        {%- if t.duration_s is not none -%}
+          {{ "%d:%02d:%02d"|format(t.duration_s // 3600, (t.duration_s % 3600) // 60, t.duration_s % 60) }}
+        {%- else -%}—{%- endif -%}
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+<!-- Printed together with the report; hidden on screen (use the Photos button there) -->
+<div class="print-only print-photos">
+  <h2 class="h5 mb-3">Photos — {{ date }}</h2>
+  {% include "_photo_cards.html" %}
+</div>
+{% endif %}
+{% endblock %}

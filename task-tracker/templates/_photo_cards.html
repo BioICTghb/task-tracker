@@ -1,0 +1,33 @@
+{# Renders one card per job that has at least one photo. Expects `tasks`. #}
+{% for t in tasks %}
+{% if t.before_path or t.after_path %}
+<div id="job-{{ t.id }}" class="card mb-3 photo-card">
+  <div class="card-header d-flex justify-content-between align-items-center">
+    <span><strong>Job #{{ t.id }}</strong> — {{ t.title }}</span>
+    <span class="badge text-bg-{{ 'success' if t.status == 'completed' else 'warning' if t.status == 'started' else 'secondary' }}">
+      {{ t.status }}
+    </span>
+  </div>
+  <div class="card-body">
+    <div class="row g-3">
+      <div class="col-6">
+        <div class="text-muted small mb-1">BEFORE{% if t.before_ts %} · {{ t.before_ts }}{% endif %}</div>
+        {% if t.before_path %}
+          <a href="/uploads/{{ t.before_path }}" target="_blank">
+            <img src="/uploads/{{ t.before_path }}" class="photo-full" alt="Job {{ t.id }} before">
+          </a>
+        {% else %}<div class="photo-missing">no photo</div>{% endif %}
+      </div>
+      <div class="col-6">
+        <div class="text-muted small mb-1">AFTER{% if t.after_ts %} · {{ t.after_ts }}{% endif %}</div>
+        {% if t.after_path %}
+          <a href="/uploads/{{ t.after_path }}" target="_blank">
+            <img src="/uploads/{{ t.after_path }}" class="photo-full" alt="Job {{ t.id }} after">
+          </a>
+        {% else %}<div class="photo-missing">no photo</div>{% endif %}
+      </div>
+    </div>
+  </div>
+</div>
+{% endif %}
+{% endfor %}
