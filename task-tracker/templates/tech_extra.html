@@ -1,0 +1,127 @@
+{% extends "base.html" %}
+{% block title %}Extra job{% endblock %}
+
+{% block content %}
+<a href="/tech" class="btn btn-link px-0 mb-2">&larr; My Tasks</a>
+
+<h1 id="task-title" class="h3 mb-1">Loading…</h1>
+<p class="mb-4">
+  <span class="badge text-bg-info">EXTRA</span>
+  <span id="task-status" class="badge text-bg-secondary">—</span>
+</p>
+
+<input type="file" id="cam-before"   accept="image/*" hidden>
+<input type="file" id="cam-progress" accept="image/*" hidden>
+<input type="file" id="cam-after"    accept="image/*" hidden>
+
+<div class="d-grid gap-3">
+  <button id="btn-before" class="btn btn-primary big-btn">TAKE BEFORE PHOTO</button>
+  <button id="btn-progress" class="btn btn-warning big-btn" disabled>
+    ADD PROGRESS PHOTO (<span id="prog-count">0</span>/4)
+  </button>
+  <button id="btn-after"  class="btn btn-success big-btn" disabled>TAKE AFTER PHOTO</button>
+</div>
+
+<div id="task-msg" class="mt-3"></div>
+{% endblock %}
+
+{% block page_script %}
+<script>
+const LOCAL_ID = decodeURIComponent(location.hash.slice(1));
+let currentStatus = "open";
+let progressUsed = new Set();
+
+function setProgressButton() {
+  document.getElementById("prog-count").textContent = progressUsed.size;
+  document.getElementById("btn-progress").disabled =
+    currentStatus !== "started" || progressUsed.size >= 4;
+}
+
+function setUI(status, title) {
+  currentStatus = status;
+  if (title) document.getElementById("task-title").textContent = title;
+  const st = document.getElementById("task-status");
+  st.textContent = status.toUpperCase();
+  st.className = "badge text-bg-" + ({open:"secondary",started:"warning",completed:"success"}[status] || "secondary");
+  document.getElementById("btn-before").disabled = status !== "open";
+  document.getElementById("btn-after").disabled  = status !== "started";
+  if (status === "completed") {
+    document.getElementById("btn-before").disabled = true;
+    document.getElementById("btn-after").disabled = true;
+  }
+  setProgressButton();
+}
+
+// Count progress photos already queued for this job (under its local id and,
+// once synced, its server id).
+async function refreshProgress() {
+  const job = await TT.db.getLocalJob(LOCAL_ID);
+  const ids = [LOCAL_ID];
+  if (job && job.serverId) ids.push(job.serverId);
+  progressUsed = new Set();
+  const out = await TT.db.getOutbox();
+  out.filter((i) => ids.includes(i.task_id) && /^progress[1-4]$/.test(i.photo_type))
+     .forEach((i) => progressUsed.add(Number(i.photo_type.slice(-1))));
+  setProgressButton();
+}
+
+function nextProgressSlot() {
+  for (let i = 1; i <= 4; i++) if (!progressUsed.has(i)) return i;
+  return null;
+}
+
+async function loadJob() {
+  const job = await TT.db.getLocalJob(LOCAL_ID);
+  if (!job) {
+    document.getElementById("task-title").textContent = "Job not found";
+    return;
+  }
+  setUI(job.status, job.title);
+  await refreshProgress();
+}
+
+async function capture(photoType, fileInput, progressSlot) {
+  const file = fileInput.files[0];
+  if (!file) return;
+  const msg = document.getElementById("task-msg");
+  msg.innerHTML = '<div class="alert alert-info py-2">Processing photo…</div>';
+
+  // Route to the server id if the job has already synced, else the local id.
+  const job = await TT.db.getLocalJob(LOCAL_ID);
+  const targetId = (job && job.serverId) ? job.serverId : LOCAL_ID;
+
+  await TT.photo.queue(targetId, photoType, file);
+
+  if (photoType.startsWith("progress")) {
+    progressUsed.add(progressSlot);
+    setProgressButton();
+  } else {
+    const newStatus = photoType === "before" ? "started" : "completed";
+    await TT.db.setLocalJobStatus(LOCAL_ID, newStatus);
+    setUI(newStatus, null);
+  }
+
+  msg.innerHTML = '<div class="alert alert-info py-2">Photo saved. Syncing…</div>';
+  const ok = await TT.sync.run();
+  msg.innerHTML = ok
+    ? '<div class="alert alert-success py-2">Saved &amp; synced.</div>'
+    : '<div class="alert alert-warning py-2">Saved offline. Will sync automatically when online.</div>';
+  fileInput.value = "";
+}
+
+document.getElementById("btn-before").addEventListener("click", () => TT.photo.choose(document.getElementById("cam-before")));
+document.getElementById("btn-after").addEventListener("click",  () => TT.photo.choose(document.getElementById("cam-after")));
+document.getElementById("btn-progress").addEventListener("click", () => {
+  if (nextProgressSlot()) TT.photo.choose(document.getElementById("cam-progress"));
+});
+document.getElementById("cam-before").addEventListener("change", (e) => capture("before", e.target));
+document.getElementById("cam-after").addEventListener("change",  (e) => capture("after",  e.target));
+document.getElementById("cam-progress").addEventListener("change", (e) => {
+  const slot = nextProgressSlot();
+  if (!slot) { e.target.value = ""; return; }
+  capture("progress" + slot, e.target, slot);
+});
+
+loadJob();
+</script>
+{% endblock %}

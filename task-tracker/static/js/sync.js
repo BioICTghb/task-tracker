@@ -15,18 +15,51 @@
     else { el.classList.add("net-online"); el.textContent = "ONLINE"; }
   }
 
+  // Create any offline 'extra' jobs on the server, then re-point their queued
+  // photos from the temporary local id to the real server id.
+  async function createLocalJobs() {
+    const jobs = (await TT.db.getLocalJobs()).filter((j) => !j.synced);
+    let ok = true;
+    for (const j of jobs) {
+      try {
+        const res = await fetch("/api/tasks/extra", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ title: j.title, timestamp: j.created_at, client_key: j.localId }),
+        });
+        if (res.ok) {
+          const data = await res.json();
+          await TT.db.remapOutboxTask(j.localId, data.id);
+          // Keep the local record (marked synced + real id) so any further
+          // photos taken on the extra page still route to the right server job.
+          j.synced = true;
+          j.serverId = data.id;
+          await TT.db.addLocalJob(j);
+        } else { ok = false; }
+      } catch (e) { ok = false; break; }
+    }
+    return ok;
+  }
+
   async function run() {
     if (running) return false;
     if (!navigator.onLine) { setStatus("offline"); return false; }
 
-    const items = await TT.db.getOutbox();
-    if (!items.length) { setStatus("online"); return true; }
-
     running = true;
     setStatus("syncing");
-    let allOk = true;
+    let allOk = await createLocalJobs();
+
+    const items = await TT.db.getOutbox();
+    if (!items.length) {
+      running = false;
+      setStatus(navigator.onLine ? "online" : "offline");
+      return allOk;
+    }
 
     for (const item of items) {
+      // Skip photos whose job hasn't been created on the server yet (still a
+      // local string id). They upload once their extra job syncs.
+      if (typeof item.task_id !== "number") { allOk = false; continue; }
       try {
         // Rebuild a Blob from the stored ArrayBuffer (new items) or use the
         // legacy stored blob (older queued items).

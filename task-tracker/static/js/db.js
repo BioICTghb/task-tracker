@@ -1,13 +1,15 @@
 /*
- * IndexedDB wrapper. Two stores:
- *   tasks   — cached task list (keyPath: id)
- *   outbox  — photos waiting to upload (auto key), each {task_id, photo_type, timestamp, blob}
+ * IndexedDB wrapper. Stores:
+ *   tasks     — cached task list (keyPath: id)
+ *   outbox    — photos waiting to upload (auto key) {task_id, photo_type, timestamp, buffer}
+ *   localjobs — extra jobs created offline before they have a server id
+ *               (keyPath: localId) {localId, title, status, created_at, synced}
  *
  * Exposed as window.TT.db
  */
 (function () {
   const DB_NAME = "task-tracker";
-  const DB_VERSION = 1;
+  const DB_VERSION = 2;
 
   function open() {
     return new Promise((resolve, reject) => {
@@ -19,6 +21,9 @@
         }
         if (!db.objectStoreNames.contains("outbox")) {
           db.createObjectStore("outbox", { keyPath: "key", autoIncrement: true });
+        }
+        if (!db.objectStoreNames.contains("localjobs")) {
+          db.createObjectStore("localjobs", { keyPath: "localId" });
         }
       };
       req.onsuccess = () => resolve(req.result);
@@ -81,6 +86,35 @@
     async outboxCount() {
       const all = await api.getOutbox();
       return all.length;
+    },
+    // Re-point queued photos from a local job id to its real server id (after sync)
+    async remapOutboxTask(oldId, newId) {
+      const all = await api.getOutbox();
+      return tx("outbox", "readwrite", (s) => {
+        all.forEach((item) => {
+          if (item.task_id === oldId) { item.task_id = newId; s.put(item); }
+        });
+      });
+    },
+
+    // ---- localjobs (extra jobs created offline) ----
+    async addLocalJob(job) {
+      return tx("localjobs", "readwrite", (s) => s.put(job));
+    },
+    async getLocalJobs() {
+      return tx("localjobs", "readonly", (s) => s.getAll());
+    },
+    async getLocalJob(localId) {
+      return tx("localjobs", "readonly", (s) => s.get(localId));
+    },
+    async setLocalJobStatus(localId, status) {
+      const j = await api.getLocalJob(localId);
+      if (!j) return;
+      j.status = status;
+      return tx("localjobs", "readwrite", (s) => s.put(j));
+    },
+    async removeLocalJob(localId) {
+      return tx("localjobs", "readwrite", (s) => s.delete(localId));
     },
   };
 

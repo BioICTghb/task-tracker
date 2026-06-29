@@ -31,7 +31,9 @@ def _sqlite_init_schema(conn):
           status TEXT NOT NULL DEFAULT 'open',
           created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
           started_at TIMESTAMP,
-          completed_at TIMESTAMP
+          completed_at TIMESTAMP,
+          is_extra INTEGER NOT NULL DEFAULT 0,
+          client_key TEXT
         );
         CREATE TABLE IF NOT EXISTS task_photos (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -42,8 +44,29 @@ def _sqlite_init_schema(conn):
           UNIQUE (task_id, photo_type),
           FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE
         );
+        CREATE TABLE IF NOT EXISTS users (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          username TEXT NOT NULL UNIQUE,
+          password_hash TEXT NOT NULL,
+          display_name TEXT NOT NULL,
+          role TEXT NOT NULL DEFAULT 'technician',
+          active INTEGER NOT NULL DEFAULT 1,
+          created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
         """
     )
+    # Idempotent migrations for databases created before these columns existed.
+    for ddl in (
+        "ALTER TABLE tasks ADD COLUMN is_extra INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE tasks ADD COLUMN client_key TEXT",
+        "ALTER TABLE tasks ADD COLUMN started_by TEXT",
+        "ALTER TABLE tasks ADD COLUMN completed_by TEXT",
+    ):
+        try:
+            conn.execute(ddl)
+        except Exception:
+            pass  # column already present
+    conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_tasks_client_key ON tasks(client_key)")
     conn.commit()
 
 

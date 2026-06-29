@@ -3,6 +3,9 @@
 
 {% block content %}
 <h1 class="h3 mb-3">My Tasks</h1>
+
+<button id="btn-extra" class="btn btn-info big-btn w-100 mb-3">+ EXTRA JOB</button>
+
 <div id="task-list" class="d-grid gap-3">
   <div class="text-muted">Loading…</div>
 </div>
@@ -10,43 +13,86 @@
 
 {% block page_script %}
 <script>
+function esc(s) {
+  return String(s == null ? "" : s).replace(/[&<>"']/g,
+    (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
 function badge(status) {
   const map = { open: "secondary", started: "warning", completed: "success" };
   return `<span class="badge text-bg-${map[status] || 'secondary'}">${status.toUpperCase()}</span>`;
 }
 
-function render(tasks) {
-  const el = document.getElementById("task-list");
-  if (!tasks.length) { el.innerHTML = '<div class="text-muted">No tasks.</div>'; return; }
-  el.innerHTML = tasks.map(t => `
-    <a href="/tech/task/${t.id}" class="task-card card text-decoration-none">
+function serverCard(t) {
+  const extra = t.is_extra ? ' <span class="badge text-bg-info">EXTRA</span>' : "";
+  return `<a href="/tech/task/${t.id}" class="task-card card text-decoration-none">
       <div class="card-body d-flex justify-content-between align-items-center">
-        <span class="task-title">${t.title}</span>
+        <span class="task-title">${esc(t.title)}${extra}</span>
         ${badge(t.status)}
-      </div>
-    </a>
-  `).join("");
+      </div></a>`;
+}
+
+function localCard(j) {
+  return `<a href="/tech/extra#${encodeURIComponent(j.localId)}" class="task-card card text-decoration-none">
+      <div class="card-body d-flex justify-content-between align-items-center">
+        <span class="task-title">${esc(j.title)} <span class="badge text-bg-info">EXTRA</span></span>
+        ${badge(j.status)}
+      </div></a>`;
+}
+
+function renderAll(serverTasks, localJobs) {
+  const el = document.getElementById("task-list");
+  const local = (localJobs || []).filter((j) => !j.synced);   // not yet on server
+  const html = [...local.map(localCard), ...(serverTasks || []).map(serverCard)].join("");
+  el.innerHTML = html || '<div class="text-muted">No tasks.</div>';
 }
 
 // Show cached tasks instantly, then refresh from network and re-cache.
 async function load() {
+  const localJobs = await TT.db.getLocalJobs();
   const cached = await TT.db.getTasks();
-  if (cached.length) render(cached);
+  if (cached.length || localJobs.length) renderAll(cached, localJobs);
 
   try {
     const res = await fetch("/api/tasks");
     if (res.ok) {
       const tasks = await res.json();
       await TT.db.saveTasks(tasks);
-      render(tasks);
+      // Reconcile: if the server already has an extra job (matched by key),
+      // mark the local copy synced so it isn't shown twice.
+      const byKey = {};
+      tasks.forEach((t) => { if (t.client_key) byKey[t.client_key] = t; });
+      for (const j of await TT.db.getLocalJobs()) {
+        if (!j.synced && byKey[j.localId]) {
+          j.synced = true; j.serverId = byKey[j.localId].id;
+          await TT.db.addLocalJob(j);
+        }
+      }
+      renderAll(tasks, await TT.db.getLocalJobs());
     }
   } catch (e) {
-    if (!cached.length) {
+    if (!cached.length && !localJobs.length) {
       document.getElementById("task-list").innerHTML =
         '<div class="alert alert-info">Offline — no cached tasks yet.</div>';
     }
   }
 }
+
+// + EXTRA JOB: create an unplanned job (works offline; syncs later)
+document.getElementById("btn-extra").addEventListener("click", async () => {
+  const note = (prompt("What is the extra job? (short description)") || "").trim();
+  if (!note) return;
+  const localId = "x-" + ((self.crypto && crypto.randomUUID)
+    ? crypto.randomUUID()
+    : Date.now() + "-" + Math.random().toString(16).slice(2));
+  await TT.db.addLocalJob({
+    localId, title: note, status: "open",
+    created_at: new Date().toISOString(), synced: false,
+  });
+  TT.sync.run();   // create on the server now if online (otherwise later)
+  location.href = "/tech/extra#" + encodeURIComponent(localId);
+});
+
 load();
 </script>
 {% endblock %}

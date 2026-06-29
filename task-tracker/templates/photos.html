@@ -1,22 +1,50 @@
 {% extends "base.html" %}
-{% block title %}Photos — {{ date }}{% endblock %}
+{% set is_single = d_from == d_to %}
+{% set span = d_from if is_single else d_from ~ " to " ~ d_to %}
+{% block title %}Photos — {{ span }}{% endblock %}
 
 {% block content %}
-<div class="d-flex flex-wrap justify-content-between align-items-center mb-3 no-print">
+<div class="d-flex flex-wrap justify-content-between align-items-end mb-3 no-print gap-2">
   <h1 class="h3 mb-0">Photos</h1>
-  <form method="get" class="d-flex gap-2">
-    <input type="date" name="date" value="{{ date }}" class="form-control">
+  <form method="get" class="d-flex flex-wrap align-items-end gap-2">
+    <div class="btn-group" role="group" aria-label="Date mode">
+      <input type="radio" class="btn-check" name="mode" id="mode-single" autocomplete="off" {{ 'checked' if is_single }}>
+      <label class="btn btn-outline-secondary" for="mode-single">Single day</label>
+      <input type="radio" class="btn-check" name="mode" id="mode-range" autocomplete="off" {{ 'checked' if not is_single }}>
+      <label class="btn btn-outline-secondary" for="mode-range">Date range</label>
+    </div>
+    <div>
+      <label class="form-label small mb-0" id="from-label">Date</label>
+      <input type="date" name="from" id="d-from" value="{{ d_from }}" class="form-control">
+    </div>
+    <div id="to-wrap">
+      <label class="form-label small mb-0">To</label>
+      <input type="date" name="to" id="d-to" value="{{ d_to }}" class="form-control">
+    </div>
     <button class="btn btn-primary">View</button>
-    <a class="btn btn-outline-secondary" href="/report?date={{ date }}">Report</a>
+    <a class="btn btn-outline-secondary" href="/report?from={{ d_from }}&to={{ d_to }}">Report</a>
     <button type="button" class="btn btn-outline-secondary" onclick="window.print()">Print / PDF</button>
   </form>
 </div>
 
-<h2 class="h5 mb-3 print-only">Photos — {{ date }}</h2>
 
 {% if not tasks %}
-  <div class="alert alert-info">No photos for {{ date }}.</div>
+  <div class="alert alert-info">No photos for {{ span }}.</div>
 {% else %}
   {% include "_photo_cards.html" %}
 {% endif %}
+{% endblock %}
+
+{% block page_script %}
+<script>
+function applyMode() {
+  const single = document.getElementById("mode-single").checked;
+  document.getElementById("to-wrap").style.display = single ? "none" : "";
+  document.getElementById("d-to").disabled = single;
+  document.getElementById("from-label").textContent = single ? "Date" : "From";
+}
+document.getElementById("mode-single").addEventListener("change", applyMode);
+document.getElementById("mode-range").addEventListener("change", applyMode);
+applyMode();
+</script>
 {% endblock %}

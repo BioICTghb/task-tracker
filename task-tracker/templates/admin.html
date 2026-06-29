@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+{% block title %}Operators{% endblock %}
+
+{% block content %}
+<h1 class="h3 mb-3">Operators</h1>
+
+{% if msg %}<div class="alert alert-info py-2">{{ msg }}</div>{% endif %}
+
+<div class="card mb-4">
+  <div class="card-header">Add operator</div>
+  <div class="card-body">
+    <form method="post" action="/admin/users" class="row g-2 align-items-end">
+      <div class="col-12 col-md-3">
+        <label class="form-label small mb-0">Full name</label>
+        <input name="display_name" class="form-control" placeholder="e.g. Jan Peeters" required>
+      </div>
+      <div class="col-6 col-md-3">
+        <label class="form-label small mb-0">Login</label>
+        <input name="username" class="form-control" autocapitalize="none" placeholder="e.g. jan" required>
+      </div>
+      <div class="col-6 col-md-2">
+        <label class="form-label small mb-0">Password</label>
+        <input name="password" class="form-control" minlength="4" required>
+      </div>
+      <div class="col-6 col-md-2">
+        <label class="form-label small mb-0">Role</label>
+        <select name="role" class="form-select">
+          <option value="technician">Technician</option>
+          <option value="manager">Manager</option>
+        </select>
+      </div>
+      <div class="col-6 col-md-2">
+        <button class="btn btn-primary w-100">Add</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<table class="table align-middle">
+  <thead class="table-light">
+    <tr><th>Name</th><th>Login</th><th>Role</th><th class="text-end">Actions</th></tr>
+  </thead>
+  <tbody>
+    {% for u in users %}
+    <tr>
+      <td>{{ u.display_name }}</td>
+      <td>{{ u.username }}</td>
+      <td><span class="badge text-bg-{{ 'primary' if u.role == 'manager' else 'secondary' }}">{{ u.role }}</span></td>
+      <td class="text-end">
+        <form method="post" action="/admin/users/{{ u.id }}/password" class="d-inline-flex gap-1 me-2">
+          <input name="password" class="form-control form-control-sm" style="width:120px" placeholder="new password" minlength="4" required>
+          <button class="btn btn-outline-secondary btn-sm">Reset</button>
+        </form>
+        <form method="post" action="/admin/users/{{ u.id }}/delete" class="d-inline"
+              onsubmit="return confirm('Remove {{ u.display_name }}?')">
+          <button class="btn btn-outline-danger btn-sm">Remove</button>
+        </form>
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

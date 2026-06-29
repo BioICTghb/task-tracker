@@ -18,7 +18,7 @@ call ".venv\Scripts\activate.bat"
 
 REM Install the parts the app needs (skips quickly if already done)
 python -m pip install --quiet --upgrade pip
-pip install --quiet Flask python-dotenv waitress
+pip install --quiet Flask python-dotenv waitress tzdata
 if errorlevel 1 goto :no_python
 
 REM Create a simple settings file the first time only

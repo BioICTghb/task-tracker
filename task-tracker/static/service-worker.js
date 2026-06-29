@@ -12,13 +12,15 @@
  * page has been closed, so queued photos upload as soon as the OS grants
  * connectivity.
  */
-const CACHE = "tt-shell-v5";
+const CACHE = "tt-shell-v12";
 const SHELL = [
   "/",
   "/tech",
+  "/tech/extra",
   "/manifest.json",
   "/static/css/style.css",
   "/static/js/db.js",
+  "/static/js/photo.js",
   "/static/js/sync.js",
   "/static/js/app.js",
   "/static/icons/icon-192.svg",
@@ -126,10 +128,42 @@ function idbDelete(db, store, key) {
   });
 }
 
+function idbPut(db, store, value) {
+  return new Promise((resolve, reject) => {
+    const t = db.transaction(store, "readwrite");
+    t.objectStore(store).put(value);
+    t.oncomplete = () => resolve();
+    t.onerror = () => reject(t.error);
+  });
+}
+
+// Create offline 'extra' jobs and re-point their queued photos to the new id.
+async function createLocalJobs(db) {
+  const jobs = (await idbGetAll(db, "localjobs")).filter((j) => !j.synced);
+  for (const j of jobs) {
+    const res = await fetch("/api/tasks/extra", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title: j.title, timestamp: j.created_at, client_key: j.localId }),
+    });
+    if (!res.ok) continue;
+    const data = await res.json();
+    const items = await idbGetAll(db, "outbox");
+    for (const item of items) {
+      if (item.task_id === j.localId) { item.task_id = data.id; await idbPut(db, "outbox", item); }
+    }
+    j.synced = true;
+    j.serverId = data.id;
+    await idbPut(db, "localjobs", j);
+  }
+}
+
 async function drainOutbox() {
   const db = await idbOpen();
+  await createLocalJobs(db);
   const items = await idbGetAll(db, "outbox");
   for (const item of items) {
+    if (typeof item.task_id !== "number") continue; // job not created yet
     try {
       const photo = item.buffer
         ? new Blob([item.buffer], { type: "image/jpeg" })

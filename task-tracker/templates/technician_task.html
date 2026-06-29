@@ -7,12 +7,17 @@
 <h1 id="task-title" class="h3 mb-1">Loading…</h1>
 <p class="mb-4"><span id="task-status" class="badge text-bg-secondary">—</span></p>
 
-<!-- Hidden camera inputs (capture opens the rear camera on phones) -->
-<input type="file" id="cam-before" accept="image/*" capture="environment" hidden>
-<input type="file" id="cam-after"  accept="image/*" capture="environment" hidden>
+<!-- Hidden photo inputs. No `capture` attribute, so the phone offers BOTH
+     "Take photo" and "Photo library / gallery" on iOS and Android. -->
+<input type="file" id="cam-before"   accept="image/*" hidden>
+<input type="file" id="cam-progress" accept="image/*" hidden>
+<input type="file" id="cam-after"    accept="image/*" hidden>
 
 <div class="d-grid gap-3">
   <button id="btn-before" class="btn btn-primary big-btn">TAKE BEFORE PHOTO</button>
+  <button id="btn-progress" class="btn btn-warning big-btn" disabled>
+    ADD PROGRESS PHOTO (<span id="prog-count">0</span>/4)
+  </button>
   <button id="btn-after"  class="btn btn-success big-btn" disabled>TAKE AFTER PHOTO</button>
 </div>
 
@@ -22,11 +27,21 @@
 {% block page_script %}
 <script>
 const TASK_ID = {{ task_id }};
+let currentStatus = null;
+let progressUsed = new Set();   // which progress slots (1..4) are already taken
+
+function setProgressButton() {
+  document.getElementById("prog-count").textContent = progressUsed.size;
+  // Progress photos are only allowed *between* start and end, up to 4.
+  document.getElementById("btn-progress").disabled =
+    currentStatus !== "started" || progressUsed.size >= 4;
+}
 
 function setUI(task) {
   if (!task || !task.status) return;   // ignore missing/garbage records
   if (task.title) document.getElementById("task-title").textContent = task.title;
   const s = task.status;
+  currentStatus = s;
   const st = document.getElementById("task-status");
   st.textContent = s.toUpperCase();
   st.className = "badge text-bg-" + ({open:"secondary",started:"warning",completed:"success"}[s] || "secondary");
@@ -37,75 +52,56 @@ function setUI(task) {
   before.disabled = s !== "open";
   after.disabled  = s !== "started";
   if (s === "completed") { before.disabled = after.disabled = true; }
+  setProgressButton();
+}
+
+// Rebuild the set of used progress slots from the server list + anything still
+// queued offline for this task.
+async function refreshProgress(serverTypes) {
+  progressUsed = new Set();
+  (serverTypes || []).forEach((pt) => {
+    const m = /^progress([1-4])$/.exec(pt);
+    if (m) progressUsed.add(Number(m[1]));
+  });
+  const out = await TT.db.getOutbox();
+  out.filter((i) => i.task_id === TASK_ID && /^progress[1-4]$/.test(i.photo_type))
+     .forEach((i) => progressUsed.add(Number(i.photo_type.slice(-1))));
+  setProgressButton();
+}
+
+function nextProgressSlot() {
+  for (let i = 1; i <= 4; i++) if (!progressUsed.has(i)) return i;
+  return null;
 }
 
 async function loadTask() {
   let task = await TT.db.getTask(TASK_ID);
   if (task) setUI(task);
+  await refreshProgress(task && task.progress);
   try {
     const res = await fetch(`/api/tasks/${TASK_ID}`);
-    if (res.ok) { task = await res.json(); setUI(task); }
+    if (res.ok) { task = await res.json(); setUI(task); await refreshProgress(task.progress); }
   } catch (e) { /* offline: keep cached */ }
 }
 
-// Downscale + recompress the camera photo to a small JPEG, returned as an
-// ArrayBuffer. iOS cameras produce huge (and sometimes HEIC) images; storing
-// those raw in IndexedDB freezes Safari. This keeps photos small and reliable.
-function photoToJpegBuffer(file, maxDim, quality) {
-  maxDim = maxDim || 1600;
-  quality = quality || 0.7;
-  return new Promise((resolve, reject) => {
-    const url = URL.createObjectURL(file);
-    const img = new Image();
-    img.onload = () => {
-      URL.revokeObjectURL(url);
-      const scale = Math.min(1, maxDim / Math.max(img.width, img.height));
-      const w = Math.max(1, Math.round(img.width * scale));
-      const h = Math.max(1, Math.round(img.height * scale));
-      const canvas = document.createElement("canvas");
-      canvas.width = w; canvas.height = h;
-      canvas.getContext("2d").drawImage(img, 0, 0, w, h);
-      canvas.toBlob((blob) => {
-        if (!blob) { reject(new Error("toBlob failed")); return; }
-        // FileReader is the most widely-supported way to get an ArrayBuffer on iOS
-        const fr = new FileReader();
-        fr.onload = () => resolve(fr.result);
-        fr.onerror = () => reject(fr.error);
-        fr.readAsArrayBuffer(blob);
-      }, "image/jpeg", quality);
-    };
-    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error("image decode failed")); };
-    img.src = url;
-  });
-}
-
-async function capture(photoType, fileInput) {
+async function capture(photoType, fileInput, progressSlot) {
   const file = fileInput.files[0];
   if (!file) return;
   const msg = document.getElementById("task-msg");
   msg.innerHTML = '<div class="alert alert-info py-2">Processing photo…</div>';
 
-  // Shrink the image (falls back to the original bytes if anything goes wrong).
-  let buffer;
-  try {
-    buffer = await photoToJpegBuffer(file);
-  } catch (e) {
-    buffer = await file.arrayBuffer();
+  // 1. Shrink + save to the offline outbox first (reliability over speed).
+  await TT.photo.queue(TASK_ID, photoType, file);
+
+  // 2. Optimistic UI update.
+  if (photoType.startsWith("progress")) {
+    progressUsed.add(progressSlot);      // progress photos never change status
+    setProgressButton();
+  } else {
+    const newStatus = photoType === "before" ? "started" : "completed";
+    await TT.db.setTaskStatus(TASK_ID, newStatus);
+    setUI({ title: document.getElementById("task-title").textContent, status: newStatus });
   }
-
-  // 1. Always save to the offline outbox first (reliability over speed).
-  await TT.db.queuePhoto({
-    task_id: TASK_ID,
-    photo_type: photoType,
-    timestamp: new Date().toISOString(),
-    buffer: buffer,
-  });
-
-  // 2. Optimistically advance status (from the intended value, not the cache,
-  //    so the UI is correct even if this job wasn't cached locally).
-  const newStatus = photoType === "before" ? "started" : "completed";
-  await TT.db.setTaskStatus(TASK_ID, newStatus);
-  setUI({ title: document.getElementById("task-title").textContent, status: newStatus });
 
   msg.innerHTML = '<div class="alert alert-info py-2">Photo saved. Syncing…</div>';
 
@@ -118,10 +114,18 @@ async function capture(photoType, fileInput) {
   fileInput.value = "";
 }
 
-document.getElementById("btn-before").addEventListener("click", () => document.getElementById("cam-before").click());
-document.getElementById("btn-after").addEventListener("click",  () => document.getElementById("cam-after").click());
+document.getElementById("btn-before").addEventListener("click", () => TT.photo.choose(document.getElementById("cam-before")));
+document.getElementById("btn-after").addEventListener("click",  () => TT.photo.choose(document.getElementById("cam-after")));
+document.getElementById("btn-progress").addEventListener("click", () => {
+  if (nextProgressSlot()) TT.photo.choose(document.getElementById("cam-progress"));
+});
 document.getElementById("cam-before").addEventListener("change", (e) => capture("before", e.target));
 document.getElementById("cam-after").addEventListener("change",  (e) => capture("after",  e.target));
+document.getElementById("cam-progress").addEventListener("change", (e) => {
+  const slot = nextProgressSlot();
+  if (!slot) { e.target.value = ""; return; }
+  capture("progress" + slot, e.target, slot);
+});
 
 loadTask();
 </script>

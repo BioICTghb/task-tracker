@@ -1,9 +1,9 @@
 {# Renders one card per job that has at least one photo. Expects `tasks`. #}
 {% for t in tasks %}
-{% if t.before_path or t.after_path %}
+{% if t.before_path or t.after_path or t.progress %}
 <div id="job-{{ t.id }}" class="card mb-3 photo-card">
   <div class="card-header d-flex justify-content-between align-items-center">
-    <span><strong>Job #{{ t.id }}</strong> — {{ t.title }}</span>
+    <span><strong>Job #{{ t.id }}</strong>{% if t.created_date %} <span class="text-muted small">{{ t.created_date }}</span>{% endif %} — {{ t.title }}{% if t.is_extra %} <span class="badge text-bg-info">EXTRA</span>{% endif %}</span>
     <span class="badge text-bg-{{ 'success' if t.status == 'completed' else 'warning' if t.status == 'started' else 'secondary' }}">
       {{ t.status }}
     </span>
@@ -27,6 +27,19 @@
         {% else %}<div class="photo-missing">no photo</div>{% endif %}
       </div>
     </div>
+
+    {% if t.progress %}
+    <div class="text-muted small mt-3 mb-1">DURING ({{ t.progress|length }})</div>
+    <div class="row g-2">
+      {% for p in t.progress %}
+      <div class="col-3">
+        <a href="/uploads/{{ p.file_path }}" target="_blank">
+          <img src="/uploads/{{ p.file_path }}" class="photo-thumb" alt="Job {{ t.id }} progress">
+        </a>
+      </div>
+      {% endfor %}
+    </div>
+    {% endif %}
   </div>
 </div>
 {% endif %}

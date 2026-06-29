@@ -24,20 +24,51 @@
 .net-offline { background: #6c757d; }
 .net-syncing { background: #fd7e14; }
 
+/* Photo source chooser (camera vs gallery) — bottom sheet */
+.photo-source {
+  display: none;
+  position: fixed; inset: 0;
+  background: rgba(0,0,0,.55);
+  z-index: 1090;
+  align-items: flex-end; justify-content: center;
+  padding: 1rem;
+}
+.photo-source.show { display: flex; }
+.photo-source-box {
+  background: #fff; border-radius: 1rem;
+  padding: 1rem; width: 100%; max-width: 420px;
+}
+
 /* Report */
 .report-thumb { max-width: 120px; max-height: 120px; object-fit: cover; }
 
-/* Photos page */
+/* Photos page — every photo renders in the same fixed 4:3 frame so the
+   report/photos grid is uniform regardless of the source image's size or
+   orientation (portrait phone shots, WhatsApp images, etc.). */
 .photo-full {
   width: 100%;
-  height: auto;
+  aspect-ratio: 4 / 3;
+  object-fit: cover;          /* fill the frame, centre-cropped */
+  display: block;
   border-radius: .5rem;
   border: 1px solid #dee2e6;
+  background: #f1f3f5;
 }
 .photo-missing {
   display: flex; align-items: center; justify-content: center;
-  height: 120px; border: 1px dashed #ced4da; border-radius: .5rem;
+  width: 100%; aspect-ratio: 4 / 3;
+  border: 1px dashed #ced4da; border-radius: .5rem;
   color: #adb5bd; font-size: .9rem;
+}
+/* Progress shots: small uniform square strip under the big before/after */
+.photo-thumb {
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  object-fit: cover;
+  display: block;
+  border-radius: .5rem;
+  border: 1px solid #dee2e6;
+  background: #f1f3f5;
 }
 
 /* Printing */
@@ -52,7 +83,15 @@
   /* Photos print after the report table, starting on a fresh page */
   .print-photos { page-break-before: always; }
   .photo-card { page-break-inside: avoid; }
-  .photo-full { max-height: 8cm; width: auto; }
+  /* Keep the uniform frames when printing too, for a clean page layout */
+  .photo-full { width: 100%; aspect-ratio: 4 / 3; object-fit: cover; }
+  .photo-thumb { width: 100%; aspect-ratio: 1 / 1; object-fit: cover; }
+
+  /* Stop a trailing blank page: drop the bottom padding/margin that can
+     overflow onto a fresh sheet. */
+  main.container { padding-top: 0 !important; padding-bottom: 0 !important; }
+  .photo-card:last-child { margin-bottom: 0 !important; }
+  .print-photos > :last-child { margin-bottom: 0 !important; }
 
   /* Make sure photos/colours actually print */
   * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }

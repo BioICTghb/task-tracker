@@ -1,34 +1,50 @@
 {% extends "base.html" %}
-{% block title %}Report — {{ date }}{% endblock %}
+{% set is_single = d_from == d_to %}
+{% set span = d_from if is_single else d_from ~ " to " ~ d_to %}
+{% block title %}Report — {{ span }}{% endblock %}
 
 {% block content %}
-<div class="d-flex flex-wrap justify-content-between align-items-center mb-3 no-print">
+<div class="d-flex flex-wrap justify-content-between align-items-end mb-3 no-print gap-2">
   <h1 class="h3 mb-0">Report</h1>
-  <form method="get" class="d-flex gap-2">
-    <input type="date" name="date" value="{{ date }}" class="form-control">
+  <form method="get" class="d-flex flex-wrap align-items-end gap-2" id="report-form">
+    <div class="btn-group" role="group" aria-label="Date mode">
+      <input type="radio" class="btn-check" name="mode" id="mode-single" autocomplete="off" {{ 'checked' if is_single }}>
+      <label class="btn btn-outline-secondary" for="mode-single">Single day</label>
+      <input type="radio" class="btn-check" name="mode" id="mode-range" autocomplete="off" {{ 'checked' if not is_single }}>
+      <label class="btn btn-outline-secondary" for="mode-range">Date range</label>
+    </div>
+    <div>
+      <label class="form-label small mb-0" id="from-label">Date</label>
+      <input type="date" name="from" id="d-from" value="{{ d_from }}" class="form-control">
+    </div>
+    <div id="to-wrap">
+      <label class="form-label small mb-0">To</label>
+      <input type="date" name="to" id="d-to" value="{{ d_to }}" class="form-control">
+    </div>
     <button class="btn btn-primary">View</button>
-    <a class="btn btn-outline-primary" href="/photos?date={{ date }}">Photos</a>
+    <a class="btn btn-outline-primary" href="/photos?from={{ d_from }}&to={{ d_to }}">Photos</a>
     <button type="button" class="btn btn-outline-secondary" onclick="window.print()">Print / PDF</button>
   </form>
 </div>
 
-<h2 class="h5 mb-3 print-only">Task Report — {{ date }}</h2>
+<h2 class="h5 mb-3 print-only">Task Report — {{ span }}</h2>
 
 {% if not tasks %}
-  <div class="alert alert-info">No tasks for {{ date }}.</div>
+  <div class="alert alert-info">No tasks for {{ span }}.</div>
 {% else %}
 <table class="table table-bordered align-middle report-table">
   <thead class="table-light">
     <tr>
-      <th>ID</th><th>Title</th><th>Status</th>
-      <th>Started</th><th>Completed</th><th>Duration</th>
+      <th>ID</th><th>Date</th><th>Title</th><th>Status</th>
+      <th>Started</th><th>Completed</th><th>Duration</th><th>By</th>
     </tr>
   </thead>
   <tbody>
     {% for t in tasks %}
     <tr>
-      <td><a href="/photos?date={{ date }}#job-{{ t.id }}">{{ t.id }}</a></td>
-      <td>{{ t.title }}</td>
+      <td><a href="/photos?date={{ t.created_date }}#job-{{ t.id }}">{{ t.id }}</a></td>
+      <td>{{ t.created_date }}</td>
+      <td>{{ t.title }}{% if t.is_extra %} <span class="badge text-bg-info">EXTRA</span>{% endif %}</td>
       <td>{{ t.status }}</td>
       <td>{{ t.started_at or "—" }}</td>
       <td>{{ t.completed_at or "—" }}</td>
@@ -37,15 +53,39 @@
           {{ "%d:%02d:%02d"|format(t.duration_s // 3600, (t.duration_s % 3600) // 60, t.duration_s % 60) }}
         {%- else -%}—{%- endif -%}
       </td>
+      <td>
+        {%- if t.started_by and t.completed_by and t.started_by != t.completed_by -%}
+          {{ t.started_by }} &rarr; {{ t.completed_by }}
+        {%- else -%}
+          {{ t.completed_by or t.started_by or "—" }}
+        {%- endif -%}
+      </td>
     </tr>
     {% endfor %}
   </tbody>
 </table>
 
-<!-- Printed together with the report; hidden on screen (use the Photos button there) -->
+<!-- Printed together with the report; hidden on screen (use the Photos button there).
+     Only rendered when something actually has a photo, to avoid an empty page. -->
+{% set any_photos = tasks|selectattr('before_path')|first or tasks|selectattr('after_path')|first or tasks|selectattr('progress')|first %}
+{% if any_photos %}
 <div class="print-only print-photos">
-  <h2 class="h5 mb-3">Photos — {{ date }}</h2>
   {% include "_photo_cards.html" %}
 </div>
 {% endif %}
+{% endif %}
+{% endblock %}
+
+{% block page_script %}
+<script>
+function applyMode() {
+  const single = document.getElementById("mode-single").checked;
+  document.getElementById("to-wrap").style.display = single ? "none" : "";
+  document.getElementById("d-to").disabled = single;     // disabled = not submitted -> to == from
+  document.getElementById("from-label").textContent = single ? "Date" : "From";
+}
+document.getElementById("mode-single").addEventListener("change", applyMode);
+document.getElementById("mode-range").addEventListener("change", applyMode);
+applyMode();
+</script>
 {% endblock %}
