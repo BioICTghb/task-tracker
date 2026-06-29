@@ -7,14 +7,10 @@ HTTPS link via a named Cloudflare Tunnel. No open ports, no manual TLS certs.
 
 ## 0. What you set up yourself (once)
 
-1. **A free Cloudflare account** — https://dash.cloudflare.com/sign-up
-2. **A domain added to that account.** The tunnel needs a hostname you control.
-   - *Free route:* add an existing **company domain** (e.g. `biopower.be`) to
-     Cloudflare. This means changing that domain's **nameservers** to Cloudflare,
-     which affects the whole company zone (website, email DNS) — **coordinate with
-     IT first.**
-   - *Simple route:* register a cheap dedicated domain (~€10/yr) and add it.
-3. Decide the hostname, e.g. `tasks.biopower.be`.
+1. **A free Cloudflare account** — done.
+2. **A domain in that account** — done: `biopower-tasks.org` (a dedicated domain,
+   so no company-DNS changes needed).
+3. Hostname for the app: **`biopower-tasks.org`** (the domain root).
 
 Everything below is on the Ubuntu box.
 
@@ -81,13 +77,13 @@ cloudflared tunnel create tasktracker          # prints a Tunnel ID + writes a c
 sudo mkdir -p /etc/cloudflared
 sudo cp ~/.cloudflared/<TUNNEL_ID>.json /etc/cloudflared/
 sudo cp deploy/cloudflared-config.yml /etc/cloudflared/config.yml
-sudo nano /etc/cloudflared/config.yml          # set <TUNNEL_ID> and your hostname
+sudo nano /etc/cloudflared/config.yml          # set <TUNNEL_ID> (hostname already = biopower-tasks.org)
 
-cloudflared tunnel route dns tasktracker tasks.biopower.be   # creates the DNS record
+cloudflared tunnel route dns tasktracker biopower-tasks.org   # creates the DNS record
 sudo cloudflared service install               # runs the tunnel 24/7
 ```
 
-Your permanent link is now **https://tasks.biopower.be** — valid cert, no open
+Your permanent link is now **https://biopower-tasks.org** — valid cert, no open
 ports, survives reboots.
 
 ## 6. First login + operators
