@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block title %}Edit tasks{% endblock %}
+
+{% block content %}
+<div class="d-flex flex-wrap justify-content-between align-items-center mb-3">
+  <h1 class="h3 mb-0">Edit tasks</h1>
+  <a href="/" class="btn btn-outline-secondary btn-sm">Back</a>
+</div>
+
+{% if saved %}<div class="alert alert-success py-2">Saved task #{{ saved }}.</div>{% endif %}
+
+<p class="text-muted small">Edit a task's description and its start / finish times, then press Save.</p>
+
+{% if not tasks %}
+  <div class="text-muted">No tasks.</div>
+{% else %}
+<div class="d-grid gap-3">
+  {% for t in tasks %}
+  <form method="post" action="/manage/tasks/{{ t.id }}" class="card">
+    <div class="card-body py-2">
+      <div class="mb-1">
+        <span class="badge text-bg-{{ 'success' if t.status == 'completed' else 'warning' if t.status == 'started' else 'secondary' }}">#{{ t.id }} · {{ t.status }}</span>
+      </div>
+      <textarea name="title" class="form-control mb-2" rows="2" required>{{ t.title }}</textarea>
+      <div class="row g-2 mb-2">
+        <div class="col-6">
+          <label class="form-label small mb-0">Started</label>
+          <input type="datetime-local" step="1" name="started_at" value="{{ t.started_at_local }}" class="form-control form-control-sm">
+        </div>
+        <div class="col-6">
+          <label class="form-label small mb-0">Finished</label>
+          <input type="datetime-local" step="1" name="completed_at" value="{{ t.completed_at_local }}" class="form-control form-control-sm">
+        </div>
+      </div>
+      <button class="btn btn-primary btn-sm">Save</button>
+    </div>
+  </form>
+  {% endfor %}
+</div>
+{% endif %}
+{% endblock %}

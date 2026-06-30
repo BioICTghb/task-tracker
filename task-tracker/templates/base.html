@@ -22,6 +22,7 @@
     <span class="text-muted">{{ current_user.name }}{% if current_user.role == 'manager' %} · manager{% endif %}</span>
     <span>
       {% if current_user.role == 'manager' %}
+        <a href="/manage/tasks" class="me-3">Edit tasks</a>
         <a href="/report" class="me-3">Report</a>
         <a href="/admin" class="me-3">Operators</a>
       {% endif %}

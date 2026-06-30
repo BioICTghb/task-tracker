@@ -19,9 +19,9 @@ def _sqlite_connect():
     conn = sqlite3.connect(Config.SQLITE_PATH, timeout=10)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
-    # Production hardening: WAL lets readers and the writer work concurrently,
-    # busy_timeout waits briefly instead of erroring if another worker is writing.
-    conn.execute("PRAGMA journal_mode = WAL")
+    # busy_timeout waits briefly instead of erroring if another connection is writing.
+    # (WAL is intentionally NOT enabled here: it misbehaves on OneDrive-synced folders.
+    #  On a dedicated Linux server you can re-enable it — see deploy notes.)
     conn.execute("PRAGMA busy_timeout = 5000")
     return conn
 

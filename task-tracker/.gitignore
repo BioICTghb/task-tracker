@@ -2,9 +2,14 @@ __pycache__/
 *.pyc
 .env
 dev.db
+dev.db-wal
+dev.db-shm
 dev.db.bak-*
 cloudflared.exe
 *.lnk
+*.log
+srv.out
+srv.err
 reports/
 venv/
 .venv/

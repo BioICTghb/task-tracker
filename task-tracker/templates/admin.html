@@ -25,7 +25,7 @@
       <div class="col-6 col-md-2">
         <label class="form-label small mb-0">Role</label>
         <select name="role" class="form-select">
-          <option value="technician">Technician</option>
+          <option value="technician">Operator</option>
           <option value="manager">Manager</option>
         </select>
       </div>
@@ -45,7 +45,7 @@
     <tr>
       <td>{{ u.display_name }}</td>
       <td>{{ u.username }}</td>
-      <td><span class="badge text-bg-{{ 'primary' if u.role == 'manager' else 'secondary' }}">{{ u.role }}</span></td>
+      <td><span class="badge text-bg-{{ 'primary' if u.role == 'manager' else 'secondary' }}">{{ 'Manager' if u.role == 'manager' else 'Operator' }}</span></td>
       <td class="text-end">
         <form method="post" action="/admin/users/{{ u.id }}/password" class="d-inline-flex gap-1 me-2">
           <input name="password" class="form-control form-control-sm" style="width:120px" placeholder="new password" minlength="4" required>

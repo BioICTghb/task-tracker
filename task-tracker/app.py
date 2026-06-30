@@ -207,6 +207,48 @@ def create_app():
         db.execute("DELETE FROM users WHERE id=%s", (uid,))
         return redirect(url_for("admin", msg="Operator removed."))
 
+    # ------------------------------------------------ edit task descriptions (manager)
+    @app.route("/manage/tasks")
+    @manager_required
+    def manage_tasks():
+        rows = db.query(
+            "SELECT id, title, status, started_at, completed_at FROM tasks ORDER BY id DESC"
+        )
+        # Format timestamps for <input type=datetime-local> (YYYY-MM-DDThh:mm:ss)
+        for r in rows:
+            for k in ("started_at", "completed_at"):
+                v = r[k]
+                r[k + "_local"] = (v.strftime("%Y-%m-%dT%H:%M:%S") if hasattr(v, "strftime")
+                                   else str(v)[:19].replace(" ", "T")) if v else ""
+        return render_template("edit_tasks.html", tasks=rows,
+                               saved=request.args.get("saved"))
+
+    def _parse_dtlocal(v):
+        """'2026-06-30T08:00' or '...:00' from a datetime-local field -> DB string / None."""
+        v = (v or "").strip().replace("T", " ")
+        if not v:
+            return None
+        return v if len(v) > 16 else v + ":00"   # add seconds if the field omitted them
+
+    @app.route("/manage/tasks/<int:task_id>", methods=["POST"])
+    @manager_required
+    def manage_task_update(task_id):
+        title = (request.form.get("title") or "").strip()
+        started = _parse_dtlocal(request.form.get("started_at"))
+        finished = _parse_dtlocal(request.form.get("completed_at"))
+        if title:
+            db.execute("UPDATE tasks SET title=%s WHERE id=%s", (title, task_id))
+        db.execute("UPDATE tasks SET started_at=%s, completed_at=%s WHERE id=%s",
+                   (started, finished, task_id))
+        # Keep the before/after photo times in sync with the task times
+        if started:
+            db.execute("UPDATE task_photos SET timestamp=%s WHERE task_id=%s AND photo_type='before'",
+                       (started, task_id))
+        if finished:
+            db.execute("UPDATE task_photos SET timestamp=%s WHERE task_id=%s AND photo_type='after'",
+                       (finished, task_id))
+        return redirect(url_for("manage_tasks", saved=task_id))
+
     @app.route("/tech")
     def tech_list():
         return render_template("technician_list.html")
