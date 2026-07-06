@@ -4,6 +4,9 @@ Task Tracker — minimal Flask backend.
 Managers paste a list -> tasks created.
 Technicians take before/after photos -> status auto-advances.
 Photos are stored on disk under uploads/YYYY/MM/DD/.
+
+Designed and developed by Sébastien Poncelet.
+Copyright (c) Sébastien Poncelet. All rights reserved.
 """
 import os
 from datetime import datetime, timezone, timedelta
@@ -19,9 +22,21 @@ from werkzeug.security import generate_password_hash, check_password_hash
 from config import Config
 import db
 
+# Pillow is used server-side as a safety net: normalise uploads that aren't already
+# JPEG (notably iPhone HEIC saved with a .jpg name) into browser-displayable JPEG.
+from PIL import Image, ImageOps
+try:
+    from pillow_heif import register_heif_opener
+    register_heif_opener()
+except Exception:  # HEIC support optional; JPEG/PNG still handled
+    pass
+
 # All timestamps are stored and shown in Belgian time (auto summer/winter DST),
 # regardless of the timezone the server itself runs in.
 BRUSSELS = ZoneInfo("Europe/Brussels")
+
+# App version — bump this on each release. Shown in the footer of every page.
+APP_VERSION = "1.0.0"
 
 
 def now_local():
@@ -39,6 +54,11 @@ def create_app():
 
     # Make sure the upload root exists
     os.makedirs(app.config["UPLOAD_ROOT"], exist_ok=True)
+
+    # Expose the version (and author) to every template.
+    @app.context_processor
+    def inject_app_meta():
+        return {"app_version": APP_VERSION, "app_author": "Sébastien Poncelet"}
 
     # --------------------------------------------------------------- auth setup
     app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(days=30)
@@ -111,6 +131,25 @@ def create_app():
         absdir = os.path.join(app.config["UPLOAD_ROOT"], rel)
         os.makedirs(absdir, exist_ok=True)
         return rel, absdir
+
+    def normalize_to_jpeg(path):
+        """If a just-saved upload isn't already JPEG (iPhone HEIC, PNG, ...), re-encode
+        it to JPEG in place so every browser can display it. EXIF orientation is applied
+        and the image is capped at 1600px (matching the client). Best-effort: on any
+        failure the original file is left untouched."""
+        try:
+            with open(path, "rb") as f:
+                head = f.read(3)
+        except OSError:
+            return
+        if head == b"\xff\xd8\xff":
+            return  # already JPEG — leave as-is (no re-encode)
+        try:
+            img = ImageOps.exif_transpose(Image.open(path)).convert("RGB")
+            img.thumbnail((1600, 1600))
+            img.save(path, "JPEG", quality=85)
+        except Exception:
+            app.logger.warning("Could not normalise upload to JPEG: %s", path)
 
     # ------------------------------------------------------------------- pages
     def is_mobile():
@@ -211,8 +250,10 @@ def create_app():
     @app.route("/manage/tasks")
     @manager_required
     def manage_tasks():
+        only_hold = request.args.get("filter") == "hold"
         rows = db.query(
-            "SELECT id, title, status, started_at, completed_at FROM tasks ORDER BY id DESC"
+            "SELECT id, title, status, started_at, completed_at, on_hold, held_seconds "
+            "FROM tasks " + ("WHERE on_hold=1 " if only_hold else "") + "ORDER BY id DESC"
         )
         # Format timestamps for <input type=datetime-local> (YYYY-MM-DDThh:mm:ss)
         for r in rows:
@@ -221,7 +262,7 @@ def create_app():
                 r[k + "_local"] = (v.strftime("%Y-%m-%dT%H:%M:%S") if hasattr(v, "strftime")
                                    else str(v)[:19].replace(" ", "T")) if v else ""
         return render_template("edit_tasks.html", tasks=rows,
-                               saved=request.args.get("saved"))
+                               saved=request.args.get("saved"), only_hold=only_hold)
 
     def _parse_dtlocal(v):
         """'2026-06-30T08:00' or '...:00' from a datetime-local field -> DB string / None."""
@@ -238,8 +279,13 @@ def create_app():
         finished = _parse_dtlocal(request.form.get("completed_at"))
         if title:
             db.execute("UPDATE tasks SET title=%s WHERE id=%s", (title, task_id))
-        db.execute("UPDATE tasks SET started_at=%s, completed_at=%s WHERE id=%s",
-                   (started, finished, task_id))
+        # A hand-entered time "wins": flag it so later photo uploads won't overwrite it.
+        # Clearing a field (None) drops the flag so the photo flow can set it again.
+        db.execute(
+            "UPDATE tasks SET started_at=%s, started_manual=%s, "
+            "completed_at=%s, completed_manual=%s WHERE id=%s",
+            (started, 1 if started else 0, finished, 1 if finished else 0, task_id),
+        )
         # Keep the before/after photo times in sync with the task times
         if started:
             db.execute("UPDATE task_photos SET timestamp=%s WHERE task_id=%s AND photo_type='before'",
@@ -247,7 +293,36 @@ def create_app():
         if finished:
             db.execute("UPDATE task_photos SET timestamp=%s WHERE task_id=%s AND photo_type='after'",
                        (finished, task_id))
-        return redirect(url_for("manage_tasks", saved=task_id))
+        return redirect(url_for("manage_tasks", saved=task_id,
+                                filter=request.form.get("filter") or None))
+
+    @app.route("/manage/tasks/<int:task_id>/hold", methods=["POST"])
+    @manager_required
+    def manage_task_hold(task_id):
+        """Toggle a task on/off hold. While on hold, elapsed time is not counted;
+        when taken off hold, the parked interval is banked into held_seconds so the
+        report duration excludes it."""
+        t = db.query("SELECT on_hold, hold_started_at FROM tasks WHERE id=%s", (task_id,), one=True)
+        if not t:
+            abort(404)
+        if t["on_hold"]:
+            add = 0
+            hs = t["hold_started_at"]
+            if hs:
+                started = hs if isinstance(hs, datetime) else datetime.fromisoformat(str(hs))
+                add = max(int((now_local().replace(tzinfo=None) - started).total_seconds()), 0)
+            db.execute(
+                "UPDATE tasks SET on_hold=0, hold_started_at=NULL, held_seconds=held_seconds+%s "
+                "WHERE id=%s",
+                (add, task_id),
+            )
+        else:
+            db.execute(
+                "UPDATE tasks SET on_hold=1, hold_started_at=%s WHERE id=%s",
+                (now_local().strftime("%Y-%m-%d %H:%M:%S"), task_id),
+            )
+        return redirect(url_for("manage_tasks", saved=task_id,
+                                filter=request.form.get("filter") or None))
 
     @app.route("/tech")
     def tech_list():
@@ -264,18 +339,20 @@ def create_app():
         return render_template("tech_extra.html")
 
     def fetch_range(d_from, d_to):
-        """Tasks created between d_from and d_to (inclusive), with photos + duration."""
+        """Jobs finished (completed) between d_from and d_to (inclusive), with photos + duration.
+        Keyed on completion date so the report shows what was actually finished that day,
+        regardless of when the job was created; unfinished jobs are excluded."""
         rows = db.query(
             """
             SELECT t.id, t.title, t.status, t.created_at, t.started_at, t.completed_at,
-                   t.is_extra, t.started_by, t.completed_by,
+                   t.is_extra, t.started_by, t.completed_by, t.held_seconds,
                    bp.file_path AS before_path, bp.timestamp AS before_ts,
                    ap.file_path AS after_path,  ap.timestamp AS after_ts
             FROM tasks t
             LEFT JOIN task_photos bp ON bp.task_id = t.id AND bp.photo_type = 'before'
             LEFT JOIN task_photos ap ON ap.task_id = t.id AND ap.photo_type = 'after'
-            WHERE DATE(t.created_at) BETWEEN %s AND %s
-            ORDER BY t.created_at, t.id
+            WHERE DATE(t.completed_at) BETWEEN %s AND %s
+            ORDER BY t.completed_at, t.id
             """,
             (d_from, d_to),
         )
@@ -285,12 +362,16 @@ def create_app():
             r["progress"] = []
             ca = r["created_at"]
             r["created_date"] = ca.strftime("%Y-%m-%d") if hasattr(ca, "strftime") else str(ca)[:10]
+            fa = r["completed_at"]
+            r["finished_date"] = fa.strftime("%Y-%m-%d") if hasattr(fa, "strftime") else (str(fa)[:10] if fa else "")
             if r["started_at"] and r["completed_at"]:
                 start = r["started_at"] if isinstance(r["started_at"], datetime) else \
                     datetime.fromisoformat(str(r["started_at"]))
                 end = r["completed_at"] if isinstance(r["completed_at"], datetime) else \
                     datetime.fromisoformat(str(r["completed_at"]))
-                r["duration_s"] = int((end - start).total_seconds())
+                # Exclude time the job was parked on hold from the tracked duration.
+                dur = int((end - start).total_seconds()) - int(r["held_seconds"] or 0)
+                r["duration_s"] = max(dur, 0)
 
         # Attach progress photos (taken between before and after), ordered by slot.
         if rows:
@@ -336,13 +417,14 @@ def create_app():
     @app.route("/api/tasks", methods=["GET"])
     def api_list_tasks():
         """All non-completed tasks for technicians (plus today's completed)."""
-        if db.IS_SQLITE:
-            order_sql = "CASE status WHEN 'started' THEN 0 WHEN 'open' THEN 1 ELSE 2 END"
-        else:
-            order_sql = "FIELD(status,'started','open','completed')"
+        # On-hold jobs sort to the very bottom (below completed); otherwise
+        # started first, then open, then completed. Works on sqlite and mysql.
+        order_sql = ("CASE WHEN on_hold=1 THEN 3 "
+                     "WHEN status='started' THEN 0 "
+                     "WHEN status='open' THEN 1 ELSE 2 END")
         rows = db.query(
             f"""
-            SELECT id, title, status, is_extra, client_key,
+            SELECT id, title, status, is_extra, client_key, on_hold,
                    created_at, started_at, completed_at
             FROM tasks
             WHERE status <> 'completed'
@@ -432,9 +514,11 @@ def create_app():
         Progress photos (taken between start and end) do not change the status.
         Idempotent per (task, type): re-upload overwrites the same file/row.
         """
-        task = db.query("SELECT id, status FROM tasks WHERE id=%s", (task_id,), one=True)
+        task = db.query("SELECT id, status, on_hold FROM tasks WHERE id=%s", (task_id,), one=True)
         if not task:
             abort(404)
+        if task["on_hold"]:
+            return jsonify({"error": "This task is on hold and can't be worked right now."}), 409
 
         allowed = ("before", "after", "progress1", "progress2", "progress3", "progress4")
         photo_type = request.form.get("photo_type", "")
@@ -451,6 +535,7 @@ def create_app():
         rel_path = os.path.join(rel_dir, filename).replace("\\", "/")
         abs_path = os.path.join(abs_dir, filename)
         file.save(abs_path)
+        normalize_to_jpeg(abs_path)   # HEIC/other -> JPEG so it always displays
 
         # Upsert photo row (re-upload of same task+type overwrites)
         if db.IS_SQLITE:
@@ -477,14 +562,19 @@ def create_app():
         # Advance status (progress photos leave the status unchanged) + record who.
         if photo_type == "before":
             db.execute(
-                "UPDATE tasks SET status='started', started_at=COALESCE(started_at,%s), "
+                "UPDATE tasks SET status='started', "
+                "started_at = CASE WHEN started_manual=1 THEN started_at "
+                "                   ELSE COALESCE(started_at,%s) END, "
                 "started_by=COALESCE(started_by,%s) WHERE id=%s",
                 (ts.strftime("%Y-%m-%d %H:%M:%S"), who, task_id),
             )
             new_status = "started"
         elif photo_type == "after":
             db.execute(
-                "UPDATE tasks SET status='completed', completed_at=%s, completed_by=%s WHERE id=%s",
+                "UPDATE tasks SET status='completed', "
+                "completed_at = CASE WHEN completed_manual=1 THEN completed_at "
+                "                    ELSE %s END, "
+                "completed_by=%s WHERE id=%s",
                 (ts.strftime("%Y-%m-%d %H:%M:%S"), who, task_id),
             )
             new_status = "completed"

@@ -11,15 +11,22 @@
 
 <p class="text-muted small">Edit a task's description and its start / finish times, then press Save.</p>
 
+<div class="btn-group btn-group-sm mb-3 no-print" role="group" aria-label="Filter">
+  <a href="/manage/tasks" class="btn btn-outline-secondary {{ 'active' if not only_hold }}">All tasks</a>
+  <a href="/manage/tasks?filter=hold" class="btn btn-outline-dark {{ 'active' if only_hold }}">On hold only</a>
+</div>
+
 {% if not tasks %}
-  <div class="text-muted">No tasks.</div>
+  <div class="text-muted">{{ 'No tasks on hold.' if only_hold else 'No tasks.' }}</div>
 {% else %}
 <div class="d-grid gap-3">
   {% for t in tasks %}
   <form method="post" action="/manage/tasks/{{ t.id }}" class="card">
     <div class="card-body py-2">
+      <input type="hidden" name="filter" value="{{ 'hold' if only_hold else '' }}">
       <div class="mb-1">
         <span class="badge text-bg-{{ 'success' if t.status == 'completed' else 'warning' if t.status == 'started' else 'secondary' }}">#{{ t.id }} · {{ t.status }}</span>
+        {% if t.on_hold %}<span class="badge text-bg-dark ms-1">ON HOLD</span>{% endif %}
       </div>
       <textarea name="title" class="form-control mb-2" rows="2" required>{{ t.title }}</textarea>
       <div class="row g-2 mb-2">
@@ -33,6 +40,10 @@
         </div>
       </div>
       <button class="btn btn-primary btn-sm">Save</button>
+      <button formaction="/manage/tasks/{{ t.id }}/hold" formmethod="post" formnovalidate
+              class="btn btn-sm {{ 'btn-dark' if t.on_hold else 'btn-outline-dark' }}">
+        {{ 'Take off hold' if t.on_hold else 'Put on hold' }}
+      </button>
     </div>
   </form>
   {% endfor %}

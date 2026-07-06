@@ -12,7 +12,7 @@
  * page has been closed, so queued photos upload as soon as the OS grants
  * connectivity.
  */
-const CACHE = "tt-shell-v12";
+const CACHE = "tt-shell-v13";
 const SHELL = [
   "/",
   "/tech",

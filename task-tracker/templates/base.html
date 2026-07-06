@@ -1,7 +1,15 @@
 <!doctype html>
+<!--
+  Task Tracker
+  Designed and developed by Sébastien Poncelet.
+  © Sébastien Poncelet — all rights reserved.
+-->
 <html lang="en">
 <head>
   <meta charset="utf-8">
+  <meta name="author" content="Sébastien Poncelet">
+  <meta name="copyright" content="© Sébastien Poncelet">
+  <meta name="version" content="{{ app_version }}">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#0d6efd">
   <title>{% block title %}Task Tracker{% endblock %}</title>
@@ -22,6 +30,7 @@
     <span class="text-muted">{{ current_user.name }}{% if current_user.role == 'manager' %} · manager{% endif %}</span>
     <span>
       {% if current_user.role == 'manager' %}
+        <a href="/" class="me-3">Home</a>
         <a href="/manage/tasks" class="me-3">Edit tasks</a>
         <a href="/report" class="me-3">Report</a>
         <a href="/admin" class="me-3">Operators</a>
@@ -36,6 +45,10 @@
   <main class="container py-3">
     {% block content %}{% endblock %}
   </main>
+
+  <footer class="container text-center text-muted py-3 no-print" style="font-size:.72rem;">
+    Task Tracker v{{ app_version }} · made by {{ app_author }}
+  </footer>
 
   <!-- Photo source chooser (camera vs gallery), shown by photo.js -->
   <div id="photo-source" class="photo-source">

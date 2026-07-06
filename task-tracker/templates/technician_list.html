@@ -18,13 +18,22 @@ function esc(s) {
     (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 }
 
-function badge(status) {
+function badge(status, onHold) {
+  if (onHold) return '<span class="badge text-bg-dark">ON HOLD</span>';
   const map = { open: "secondary", started: "warning", completed: "success" };
   return `<span class="badge text-bg-${map[status] || 'secondary'}">${status.toUpperCase()}</span>`;
 }
 
 function serverCard(t) {
   const extra = t.is_extra ? ' <span class="badge text-bg-info">EXTRA</span>' : "";
+  // On-hold tasks are not workable: non-clickable, greyed-out card (no link).
+  if (t.on_hold) {
+    return `<div class="task-card card on-hold">
+      <div class="card-body d-flex justify-content-between align-items-center">
+        <span class="task-title">${esc(t.title)}${extra}</span>
+        <span class="badge text-bg-dark">ON HOLD</span>
+      </div></div>`;
+  }
   return `<a href="/tech/task/${t.id}" class="task-card card text-decoration-none">
       <div class="card-body d-flex justify-content-between align-items-center">
         <span class="task-title">${esc(t.title)}${extra}</span>
@@ -47,29 +56,32 @@ function renderAll(serverTasks, localJobs) {
   el.innerHTML = html || '<div class="text-muted">No tasks.</div>';
 }
 
+// Fetch the live list, re-cache it, reconcile offline extra jobs, and re-render.
+async function refreshFromNetwork() {
+  const res = await fetch("/api/tasks");
+  if (!res.ok) return;
+  const tasks = await res.json();
+  await TT.db.saveTasks(tasks);
+  // Reconcile: if the server already has an extra job (matched by key),
+  // mark the local copy synced so it isn't shown twice.
+  const byKey = {};
+  tasks.forEach((t) => { if (t.client_key) byKey[t.client_key] = t; });
+  for (const j of await TT.db.getLocalJobs()) {
+    if (!j.synced && byKey[j.localId]) {
+      j.synced = true; j.serverId = byKey[j.localId].id;
+      await TT.db.addLocalJob(j);
+    }
+  }
+  renderAll(tasks, await TT.db.getLocalJobs());
+}
+
 // Show cached tasks instantly, then refresh from network and re-cache.
 async function load() {
   const localJobs = await TT.db.getLocalJobs();
   const cached = await TT.db.getTasks();
   if (cached.length || localJobs.length) renderAll(cached, localJobs);
-
   try {
-    const res = await fetch("/api/tasks");
-    if (res.ok) {
-      const tasks = await res.json();
-      await TT.db.saveTasks(tasks);
-      // Reconcile: if the server already has an extra job (matched by key),
-      // mark the local copy synced so it isn't shown twice.
-      const byKey = {};
-      tasks.forEach((t) => { if (t.client_key) byKey[t.client_key] = t; });
-      for (const j of await TT.db.getLocalJobs()) {
-        if (!j.synced && byKey[j.localId]) {
-          j.synced = true; j.serverId = byKey[j.localId].id;
-          await TT.db.addLocalJob(j);
-        }
-      }
-      renderAll(tasks, await TT.db.getLocalJobs());
-    }
+    await refreshFromNetwork();
   } catch (e) {
     if (!cached.length && !localJobs.length) {
       document.getElementById("task-list").innerHTML =
@@ -94,5 +106,16 @@ document.getElementById("btn-extra").addEventListener("click", async () => {
 });
 
 load();
+
+// Light auto-refresh so manager changes (e.g. a task put on hold, or newly
+// published tasks) appear without a manual reload. Only when the tab is visible
+// and online, so there's no background churn or offline flicker.
+function pollIfActive() {
+  if (document.visibilityState === "visible" && navigator.onLine) {
+    refreshFromNetwork().catch(() => {});
+  }
+}
+setInterval(pollIfActive, 20000);
+document.addEventListener("visibilitychange", pollIfActive);
 </script>
 {% endblock %}

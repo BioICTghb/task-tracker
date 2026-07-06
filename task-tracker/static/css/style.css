@@ -10,6 +10,9 @@
 .task-card .task-title { font-size: 1.25rem; font-weight: 600; }
 .task-card { transition: transform .05s; }
 .task-card:active { transform: scale(0.99); }
+/* Parked tasks: greyed out so operators can see they're paused, not active. */
+.task-card.on-hold { opacity: .6; background-color: #f2f2f2; cursor: not-allowed; }
+.task-card.on-hold .task-title { color: #6c757d; }
 
 /* Connection status banner */
 .net-status {

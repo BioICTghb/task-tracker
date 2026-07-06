@@ -3,6 +3,15 @@
  * and run the sync engine automatically.
  */
 (function () {
+  // Task Tracker — designed and developed by Sébastien Poncelet.
+  // © Sébastien Poncelet. All rights reserved.
+  try {
+    console.log(
+      "%cTask Tracker%c — made by Sébastien Poncelet",
+      "font-weight:700", "color:#666"
+    );
+  } catch (e) { /* no console */ }
+
   // Register service worker (PWA + offline shell)
   if ("serviceWorker" in navigator) {
     window.addEventListener("load", () => {

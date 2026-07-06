@@ -35,15 +35,15 @@
 <table class="table table-bordered align-middle report-table">
   <thead class="table-light">
     <tr>
-      <th>ID</th><th>Date</th><th>Title</th><th>Status</th>
+      <th>ID</th><th>Finished</th><th>Title</th><th>Status</th>
       <th>Started</th><th>Completed</th><th>Duration</th><th>By</th>
     </tr>
   </thead>
   <tbody>
     {% for t in tasks %}
     <tr>
-      <td><a href="/photos?date={{ t.created_date }}#job-{{ t.id }}">{{ t.id }}</a></td>
-      <td>{{ t.created_date }}</td>
+      <td><a href="/photos?date={{ t.finished_date }}#job-{{ t.id }}">{{ t.id }}</a></td>
+      <td>{{ t.finished_date }}</td>
       <td>{{ t.title }}{% if t.is_extra %} <span class="badge text-bg-info">EXTRA</span>{% endif %}</td>
       <td>{{ t.status }}</td>
       <td>{{ t.started_at or "—" }}</td>

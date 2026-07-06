@@ -65,6 +65,13 @@ def _sqlite_init_schema(conn):
         "ALTER TABLE tasks ADD COLUMN client_key TEXT",
         "ALTER TABLE tasks ADD COLUMN started_by TEXT",
         "ALTER TABLE tasks ADD COLUMN completed_by TEXT",
+        "ALTER TABLE tasks ADD COLUMN on_hold INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE tasks ADD COLUMN hold_started_at TIMESTAMP",
+        "ALTER TABLE tasks ADD COLUMN held_seconds INTEGER NOT NULL DEFAULT 0",
+        # Set when a manager edits the time by hand, so later photo uploads
+        # don't overwrite it ("manual time wins").
+        "ALTER TABLE tasks ADD COLUMN started_manual INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE tasks ADD COLUMN completed_manual INTEGER NOT NULL DEFAULT 0",
     ):
         try:
             conn.execute(ddl)
