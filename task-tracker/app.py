@@ -336,7 +336,9 @@ def create_app():
             hs = t["hold_started_at"]
             if hs:
                 started = hs if isinstance(hs, datetime) else datetime.fromisoformat(str(hs))
-                add = max(int((now_local().replace(tzinfo=None) - started).total_seconds()), 0)
+                # Count the parked interval on the SAME basis as duration (shift hours
+                # only) so a hold spanning nights can't exceed the worked time.
+                add = worked_seconds(started, now_local().replace(tzinfo=None))
             db.execute(
                 "UPDATE tasks SET on_hold=0, hold_started_at=NULL, held_seconds=held_seconds+%s "
                 "WHERE id=%s",
