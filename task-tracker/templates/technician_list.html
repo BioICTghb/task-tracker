@@ -4,7 +4,10 @@
 {% block content %}
 <h1 class="h3 mb-3">My Tasks</h1>
 
-<button id="btn-extra" class="btn btn-info big-btn w-100 mb-3">+ EXTRA JOB</button>
+<div class="d-flex gap-2 mb-3">
+  <button id="btn-extra" class="btn btn-info big-btn flex-fill">+ EXTRA JOB</button>
+  <button id="btn-rent" class="btn btn-primary big-btn flex-fill">RENT</button>
+</div>
 
 <div id="task-list" class="d-grid gap-3">
   <div class="text-muted">Loading…</div>
@@ -24,19 +27,26 @@ function badge(status, onHold) {
   return `<span class="badge text-bg-${map[status] || 'secondary'}">${status.toUpperCase()}</span>`;
 }
 
+// Badge marking a job as RENT (rent-paying) or EXTRA (unplanned); "" for normal.
+function kindTag(t) {
+  if (t.is_rent || t.kind === "rent") return ' <span class="badge text-bg-primary">RENT</span>';
+  if (t.is_extra || t.kind === "extra") return ' <span class="badge text-bg-info">EXTRA</span>';
+  return "";
+}
+
 function serverCard(t) {
-  const extra = t.is_extra ? ' <span class="badge text-bg-info">EXTRA</span>' : "";
+  const tag = kindTag(t);
   // On-hold tasks are not workable: non-clickable, greyed-out card (no link).
   if (t.on_hold) {
     return `<div class="task-card card on-hold">
       <div class="card-body d-flex justify-content-between align-items-center">
-        <span class="task-title">${esc(t.title)}${extra}</span>
+        <span class="task-title">${esc(t.title)}${tag}</span>
         <span class="badge text-bg-dark">ON HOLD</span>
       </div></div>`;
   }
   return `<a href="/tech/task/${t.id}" class="task-card card text-decoration-none">
       <div class="card-body d-flex justify-content-between align-items-center">
-        <span class="task-title">${esc(t.title)}${extra}</span>
+        <span class="task-title">${esc(t.title)}${tag}</span>
         ${badge(t.status)}
       </div></a>`;
 }
@@ -44,7 +54,7 @@ function serverCard(t) {
 function localCard(j) {
   return `<a href="/tech/extra#${encodeURIComponent(j.localId)}" class="task-card card text-decoration-none">
       <div class="card-body d-flex justify-content-between align-items-center">
-        <span class="task-title">${esc(j.title)} <span class="badge text-bg-info">EXTRA</span></span>
+        <span class="task-title">${esc(j.title)}${kindTag(j)}</span>
         ${badge(j.status)}
       </div></a>`;
 }
@@ -90,20 +100,24 @@ async function load() {
   }
 }
 
-// + EXTRA JOB: create an unplanned job (works offline; syncs later)
-document.getElementById("btn-extra").addEventListener("click", async () => {
-  const note = (prompt("What is the extra job? (short description)") || "").trim();
+// Create an unplanned job (works offline; syncs later). kind: 'extra' | 'rent'.
+async function createUnplanned(kind, promptText) {
+  const note = (prompt(promptText) || "").trim();
   if (!note) return;
   const localId = "x-" + ((self.crypto && crypto.randomUUID)
     ? crypto.randomUUID()
     : Date.now() + "-" + Math.random().toString(16).slice(2));
   await TT.db.addLocalJob({
-    localId, title: note, status: "open",
+    localId, title: note, status: "open", kind,
     created_at: new Date().toISOString(), synced: false,
   });
   TT.sync.run();   // create on the server now if online (otherwise later)
   location.href = "/tech/extra#" + encodeURIComponent(localId);
-});
+}
+document.getElementById("btn-extra").addEventListener("click",
+  () => createUnplanned("extra", "What is the extra job? (short description)"));
+document.getElementById("btn-rent").addEventListener("click",
+  () => createUnplanned("rent", "Rent job — short description of the work"));
 
 load();
 

@@ -44,7 +44,7 @@
     <tr>
       <td><a href="/photos?date={{ t.finished_date }}#job-{{ t.id }}">{{ t.id }}</a></td>
       <td>{{ t.finished_date }}</td>
-      <td>{{ t.title }}{% if t.is_extra %} <span class="badge text-bg-info">EXTRA</span>{% endif %}</td>
+      <td>{{ t.title }}{% if t.is_rent %} <span class="badge text-bg-primary">RENT</span>{% elif t.is_extra %} <span class="badge text-bg-info">EXTRA</span>{% endif %}</td>
       <td>{{ t.status }}</td>
       <td>{{ t.started_at or "—" }}</td>
       <td>{{ t.completed_at or "—" }}</td>

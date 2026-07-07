@@ -12,7 +12,7 @@
  * page has been closed, so queued photos upload as soon as the OS grants
  * connectivity.
  */
-const CACHE = "tt-shell-v14";
+const CACHE = "tt-shell-v15";
 const SHELL = [
   "/",
   "/tech",
@@ -144,7 +144,7 @@ async function createLocalJobs(db) {
     const res = await fetch("/api/tasks/extra", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ title: j.title, timestamp: j.created_at, client_key: j.localId }),
+      body: JSON.stringify({ title: j.title, timestamp: j.created_at, client_key: j.localId, kind: j.kind }),
     });
     if (!res.ok) continue;
     const data = await res.json();

@@ -25,7 +25,7 @@
         const res = await fetch("/api/tasks/extra", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ title: j.title, timestamp: j.created_at, client_key: j.localId }),
+          body: JSON.stringify({ title: j.title, timestamp: j.created_at, client_key: j.localId, kind: j.kind }),
         });
         if (res.ok) {
           const data = await res.json();

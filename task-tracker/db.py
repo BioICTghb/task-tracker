@@ -72,6 +72,9 @@ def _sqlite_init_schema(conn):
         # don't overwrite it ("manual time wins").
         "ALTER TABLE tasks ADD COLUMN started_manual INTEGER NOT NULL DEFAULT 0",
         "ALTER TABLE tasks ADD COLUMN completed_manual INTEGER NOT NULL DEFAULT 0",
+        # Operator-created 'rent' jobs (hours worked to pay on-site rent),
+        # tracked separately from unplanned 'extra' jobs.
+        "ALTER TABLE tasks ADD COLUMN is_rent INTEGER NOT NULL DEFAULT 0",
     ):
         try:
             conn.execute(ddl)

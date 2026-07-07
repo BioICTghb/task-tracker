@@ -3,7 +3,7 @@
 {% if t.before_path or t.after_path or t.progress %}
 <div id="job-{{ t.id }}" class="card mb-3 photo-card">
   <div class="card-header d-flex justify-content-between align-items-center">
-    <span><strong>Job #{{ t.id }}</strong>{% if t.finished_date %} <span class="text-muted small">{{ t.finished_date }}</span>{% endif %} — {{ t.title }}{% if t.is_extra %} <span class="badge text-bg-info">EXTRA</span>{% endif %}</span>
+    <span><strong>Job #{{ t.id }}</strong>{% if t.finished_date %} <span class="text-muted small">{{ t.finished_date }}</span>{% endif %} — {{ t.title }}{% if t.is_rent %} <span class="badge text-bg-primary">RENT</span>{% elif t.is_extra %} <span class="badge text-bg-info">EXTRA</span>{% endif %}</span>
     <span class="badge text-bg-{{ 'success' if t.status == 'completed' else 'warning' if t.status == 'started' else 'secondary' }}">
       {{ t.status }}
     </span>

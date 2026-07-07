@@ -388,7 +388,7 @@ def create_app():
         rows = db.query(
             """
             SELECT t.id, t.title, t.status, t.created_at, t.started_at, t.completed_at,
-                   t.is_extra, t.started_by, t.completed_by, t.held_seconds,
+                   t.is_extra, t.is_rent, t.started_by, t.completed_by, t.held_seconds,
                    bp.file_path AS before_path, bp.timestamp AS before_ts,
                    ap.file_path AS after_path,  ap.timestamp AS after_ts
             FROM tasks t
@@ -468,7 +468,7 @@ def create_app():
                      "WHEN status='open' THEN 1 ELSE 2 END")
         rows = db.query(
             f"""
-            SELECT id, title, status, is_extra, client_key, on_hold,
+            SELECT id, title, status, is_extra, is_rent, client_key, on_hold,
                    created_at, started_at, completed_at
             FROM tasks
             WHERE status <> 'completed'
@@ -539,9 +539,13 @@ def create_app():
                 return jsonify(existing), 200
 
         created_at = parse_ts(data.get("timestamp")).strftime("%Y-%m-%d %H:%M:%S")
+        # kind = 'rent' marks a rent-paying job; anything else is a normal extra job.
+        is_rent = 1 if data.get("kind") == "rent" else 0
+        is_extra = 0 if is_rent else 1
         new_id = db.execute(
-            "INSERT INTO tasks (title, created_at, is_extra, client_key) VALUES (%s, %s, 1, %s)",
-            (title, created_at, client_key),
+            "INSERT INTO tasks (title, created_at, is_extra, is_rent, client_key) "
+            "VALUES (%s, %s, %s, %s, %s)",
+            (title, created_at, is_extra, is_rent, client_key),
         )
         return jsonify({"id": new_id, "title": title, "status": "open"}), 201
 

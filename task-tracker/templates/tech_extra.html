@@ -6,7 +6,7 @@
 
 <h1 id="task-title" class="h3 mb-1">Loading…</h1>
 <p class="mb-4">
-  <span class="badge text-bg-info">EXTRA</span>
+  <span id="kind-badge" class="badge text-bg-info">EXTRA</span>
   <span id="task-status" class="badge text-bg-secondary">—</span>
 </p>
 
@@ -75,6 +75,11 @@ async function loadJob() {
   if (!job) {
     document.getElementById("task-title").textContent = "Job not found";
     return;
+  }
+  if (job.kind === "rent") {
+    const kb = document.getElementById("kind-badge");
+    kb.textContent = "RENT";
+    kb.className = "badge text-bg-primary";
   }
   setUI(job.status, job.title);
   await refreshProgress();
