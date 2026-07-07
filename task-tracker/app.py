@@ -38,6 +38,9 @@ BRUSSELS = ZoneInfo("Europe/Brussels")
 # App version — bump this on each release. Shown in the footer of every page.
 APP_VERSION = "1.1.0"
 
+# Operators who live on site and log rent hours — only they see the Rent button.
+RENT_USERNAMES = {"taras_d", "ivan_d", "sebastian_r", "tomasz_m"}
+
 
 def now_local():
     return datetime.now(BRUSSELS)
@@ -369,7 +372,8 @@ def create_app():
 
     @app.route("/tech")
     def tech_list():
-        return render_template("technician_list.html")
+        show_rent = (current_user() or {}).get("username") in RENT_USERNAMES
+        return render_template("technician_list.html", show_rent=show_rent)
 
     @app.route("/tech/task/<int:task_id>")
     def tech_task(task_id):

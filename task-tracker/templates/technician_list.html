@@ -6,7 +6,7 @@
 
 <div class="d-flex gap-2 mb-3">
   <button id="btn-extra" class="btn btn-info big-btn flex-fill">+ EXTRA JOB</button>
-  <button id="btn-rent" class="btn btn-primary big-btn flex-fill">RENT</button>
+  {% if show_rent %}<button id="btn-rent" class="btn btn-primary big-btn flex-fill">RENT</button>{% endif %}
 </div>
 
 <div id="task-list" class="d-grid gap-3">
@@ -116,7 +116,8 @@ async function createUnplanned(kind, promptText) {
 }
 document.getElementById("btn-extra").addEventListener("click",
   () => createUnplanned("extra", "What is the extra job? (short description)"));
-document.getElementById("btn-rent").addEventListener("click",
+const rentBtn = document.getElementById("btn-rent");
+if (rentBtn) rentBtn.addEventListener("click",
   () => createUnplanned("rent", "Rent job — short description of the work"));
 
 load();
