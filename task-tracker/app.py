@@ -36,7 +36,7 @@ except Exception:  # HEIC support optional; JPEG/PNG still handled
 BRUSSELS = ZoneInfo("Europe/Brussels")
 
 # App version — bump this on each release. Shown in the footer of every page.
-APP_VERSION = "1.0.0"
+APP_VERSION = "1.1.0"
 
 
 def now_local():
@@ -45,6 +45,32 @@ def now_local():
 
 def today_local():
     return now_local().strftime("%Y-%m-%d")
+
+
+# Normal day shift. Reported time only counts hours inside this window, so a job
+# spanning multiple days is capped at 8 h/day and idle nights don't inflate it.
+SHIFT_START_HOUR = 8   # 08:00
+SHIFT_END_HOUR = 16    # 16:00
+
+
+def worked_seconds(start, end):
+    """Seconds worked between start and end, counting only each day's shift
+    window (SHIFT_START_HOUR..SHIFT_END_HOUR). E.g. 05/07 14:00 -> 07/07 14:00
+    = 2h (05th) + 8h (06th) + 6h (07th) = 16h, not 48h."""
+    if not start or not end or end <= start:
+        return 0
+    total = 0.0
+    day = start.date()
+    last = end.date()
+    while day <= last:
+        ws = datetime(day.year, day.month, day.day, SHIFT_START_HOUR)
+        we = datetime(day.year, day.month, day.day, SHIFT_END_HOUR)
+        lo = start if start > ws else ws       # later of (start, shift start)
+        hi = end if end < we else we           # earlier of (end, shift end)
+        if hi > lo:
+            total += (hi - lo).total_seconds()
+        day += timedelta(days=1)
+    return int(total)
 
 
 def create_app():
@@ -324,6 +350,21 @@ def create_app():
         return redirect(url_for("manage_tasks", saved=task_id,
                                 filter=request.form.get("filter") or None))
 
+    @app.route("/manage/tasks/<int:task_id>/delete", methods=["POST"])
+    @manager_required
+    def manage_task_delete(task_id):
+        """Permanently delete a task: its photo files on disk, photo rows, then the task."""
+        for p in db.query("SELECT file_path FROM task_photos WHERE task_id=%s", (task_id,)):
+            abs_path = os.path.join(app.config["UPLOAD_ROOT"], p["file_path"].replace("/", os.sep))
+            try:
+                if os.path.exists(abs_path):
+                    os.remove(abs_path)
+            except OSError:
+                pass  # leave orphan file rather than fail the delete
+        db.execute("DELETE FROM task_photos WHERE task_id=%s", (task_id,))
+        db.execute("DELETE FROM tasks WHERE id=%s", (task_id,))
+        return redirect(url_for("manage_tasks", filter=request.form.get("filter") or None))
+
     @app.route("/tech")
     def tech_list():
         return render_template("technician_list.html")
@@ -369,8 +410,9 @@ def create_app():
                     datetime.fromisoformat(str(r["started_at"]))
                 end = r["completed_at"] if isinstance(r["completed_at"], datetime) else \
                     datetime.fromisoformat(str(r["completed_at"]))
-                # Exclude time the job was parked on hold from the tracked duration.
-                dur = int((end - start).total_seconds()) - int(r["held_seconds"] or 0)
+                # Count only shift hours (max 8 h/day) so multi-day jobs aren't
+                # inflated by nights, then exclude any time parked on hold.
+                dur = worked_seconds(start, end) - int(r["held_seconds"] or 0)
                 r["duration_s"] = max(dur, 0)
 
         # Attach progress photos (taken between before and after), ordered by slot.

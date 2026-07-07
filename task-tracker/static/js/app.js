@@ -51,3 +51,32 @@
     } catch (e) { /* background sync unsupported — page-level sync still works */ }
   }
 })();
+
+/*
+ * Periodic auto-refresh so installed PWAs never get stuck on an old version.
+ * Reloads every 15 minutes, but only when it won't interrupt the operator:
+ * skips while offline, while a photo upload is queued, while the photo chooser
+ * is open, or while a text field is focused (e.g. a manager editing times).
+ */
+(function () {
+  const EVERY_MS = 15 * 60 * 1000;
+
+  function unsafeToReload() {
+    if (!navigator.onLine) return true;                 // offline: reload is pointless/disruptive
+    const a = document.activeElement;
+    if (a && (a.tagName === "INPUT" || a.tagName === "TEXTAREA" || a.isContentEditable)) return true;
+    const chooser = document.getElementById("photo-source");
+    if (chooser && chooser.offsetParent !== null) return true;   // photo chooser is open
+    return false;
+  }
+
+  async function maybeReload() {
+    try {
+      if (window.TT && TT.db && (await TT.db.outboxCount()) > 0) return;  // uploads pending
+    } catch (e) { /* ignore */ }
+    if (!unsafeToReload()) location.reload();
+    // If it wasn't safe, we simply try again at the next interval.
+  }
+
+  setInterval(maybeReload, EVERY_MS);
+})();

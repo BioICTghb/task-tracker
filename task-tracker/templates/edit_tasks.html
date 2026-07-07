@@ -44,6 +44,11 @@
               class="btn btn-sm {{ 'btn-dark' if t.on_hold else 'btn-outline-dark' }}">
         {{ 'Take off hold' if t.on_hold else 'Put on hold' }}
       </button>
+      <button formaction="/manage/tasks/{{ t.id }}/delete" formmethod="post" formnovalidate
+              class="btn btn-sm btn-outline-danger float-end"
+              onclick="return confirm('Delete task #{{ t.id }}? This permanently removes the task and its photos.');">
+        Delete
+      </button>
     </div>
   </form>
   {% endfor %}
