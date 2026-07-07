@@ -39,7 +39,7 @@ BRUSSELS = ZoneInfo("Europe/Brussels")
 APP_VERSION = "1.1.0"
 
 # Operators who live on site and log rent hours — only they see the Rent button.
-RENT_USERNAMES = {"taras_d", "ivan_d", "sebastian_r", "tomasz_m"}
+RENT_USERNAMES = {"taras_d", "ivan_d", "sebastian_r", "tomasz_m", "sebastien_p"}
 
 
 def now_local():
