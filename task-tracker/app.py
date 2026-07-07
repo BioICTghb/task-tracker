@@ -36,10 +36,14 @@ except Exception:  # HEIC support optional; JPEG/PNG still handled
 BRUSSELS = ZoneInfo("Europe/Brussels")
 
 # App version — bump this on each release. Shown in the footer of every page.
-APP_VERSION = "1.1.0"
+APP_VERSION = "1.2.0"
 
 # Operators who live on site and log rent hours — only they see the Rent button.
 RENT_USERNAMES = {"taras_d", "ivan_d", "sebastian_r", "tomasz_m", "sebastien_p"}
+
+# Roles with manager-level access (publish, report, edit, admin). 'developer' is
+# a manager with a different label.
+MANAGER_ROLES = {"manager", "developer"}
 
 
 def now_local():
@@ -137,7 +141,7 @@ def create_app():
         @wraps(view)
         def wrapped(*a, **kw):
             u = current_user()
-            if not u or u.get("role") != "manager":
+            if not u or u.get("role") not in MANAGER_ROLES:
                 abort(403)
             return view(*a, **kw)
         return wrapped
