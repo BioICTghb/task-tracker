@@ -61,11 +61,17 @@ SHIFT_END_HOUR = 16    # 16:00
 
 
 def worked_seconds(start, end):
-    """Seconds worked between start and end, counting only each day's shift
-    window (SHIFT_START_HOUR..SHIFT_END_HOUR). E.g. 05/07 14:00 -> 07/07 14:00
-    = 2h (05th) + 8h (06th) + 6h (07th) = 16h, not 48h."""
+    """Seconds worked between start and end.
+
+    Single-day jobs count actual elapsed time (capped at one 8h shift), so
+    early-morning (pre-08:00) or evening work still counts. Multi-day jobs count
+    only each day's shift window (08:00-16:00) so idle nights don't inflate them,
+    e.g. 05/07 14:00 -> 07/07 14:00 = 2h + 8h + 6h = 16h."""
     if not start or not end or end <= start:
         return 0
+    if start.date() == end.date():
+        secs = int((end - start).total_seconds())
+        return min(secs, (SHIFT_END_HOUR - SHIFT_START_HOUR) * 3600)
     total = 0.0
     day = start.date()
     last = end.date()
