@@ -302,11 +302,17 @@ def create_app():
     @manager_required
     def manage_tasks():
         ensure_todays_dailies()
-        only_hold = request.args.get("filter") == "hold"
+        flt = request.args.get("filter")
+        if flt == "hold":
+            where = "WHERE on_hold=1 "
+        elif flt == "daily":
+            where = "WHERE is_daily=1 "            # the recurring 'master' templates
+        else:
+            where = "WHERE is_daily=0 "            # normal view hides daily masters
         rows = db.query(
             "SELECT id, title, status, started_at, completed_at, on_hold, held_seconds, "
             "is_daily, daily_of "
-            "FROM tasks " + ("WHERE on_hold=1 " if only_hold else "") + "ORDER BY id DESC"
+            "FROM tasks " + where + "ORDER BY id DESC"
         )
         # Format timestamps for <input type=datetime-local> (YYYY-MM-DDThh:mm:ss)
         for r in rows:
@@ -315,7 +321,7 @@ def create_app():
                 r[k + "_local"] = (v.strftime("%Y-%m-%dT%H:%M:%S") if hasattr(v, "strftime")
                                    else str(v)[:19].replace(" ", "T")) if v else ""
         return render_template("edit_tasks.html", tasks=rows,
-                               saved=request.args.get("saved"), only_hold=only_hold)
+                               saved=request.args.get("saved"), flt=flt)
 
     def _parse_dtlocal(v):
         """'2026-06-30T08:00' or '...:00' from a datetime-local field -> DB string / None."""
@@ -406,8 +412,9 @@ def create_app():
         db.execute("UPDATE tasks SET is_daily=%s WHERE id=%s", (new, task_id))
         if new:
             ensure_todays_dailies()
+        # A task made 'daily' moves to the masters list; un-made returns to normal.
         return redirect(url_for("manage_tasks", saved=task_id,
-                                filter=request.form.get("filter") or None))
+                                filter="daily" if new else None))
 
     @app.route("/tech")
     def tech_list():
