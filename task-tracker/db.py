@@ -75,6 +75,10 @@ def _sqlite_init_schema(conn):
         # Operator-created 'rent' jobs (hours worked to pay on-site rent),
         # tracked separately from unplanned 'extra' jobs.
         "ALTER TABLE tasks ADD COLUMN is_rent INTEGER NOT NULL DEFAULT 0",
+        # Daily recurring tasks: is_daily=1 marks a (hidden) template; each day an
+        # instance is generated with daily_of set to that template's id.
+        "ALTER TABLE tasks ADD COLUMN is_daily INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE tasks ADD COLUMN daily_of INTEGER",
     ):
         try:
             conn.execute(ddl)

@@ -54,6 +54,17 @@ def today_local():
     return now_local().strftime("%Y-%m-%d")
 
 
+def split_daily_prefix(line):
+    """If a line starts with 'DAILY' (any case, followed by a space/separator),
+    return (True, rest-without-prefix); otherwise (False, line)."""
+    s = line.lstrip()
+    if s[:5].lower() == "daily" and (len(s) == 5 or not s[5].isalpha()):
+        rest = s[5:].lstrip(" \t-:–—")
+        if rest:
+            return True, rest
+    return False, line
+
+
 # Normal day shift. Reported time only counts hours inside this window, so a job
 # spanning multiple days is capped at 8 h/day and idle nights don't inflate it.
 SHIFT_START_HOUR = 8   # 08:00
@@ -234,6 +245,7 @@ def create_app():
         # Role drives the landing page; technicians never see the publish/report side.
         if current_user().get("role") == "technician":
             return redirect(url_for("tech_list"))
+        ensure_todays_dailies()
         return render_template("manager.html")
 
     # ----------------------------------------------------------- operators (admin)
@@ -289,9 +301,11 @@ def create_app():
     @app.route("/manage/tasks")
     @manager_required
     def manage_tasks():
+        ensure_todays_dailies()
         only_hold = request.args.get("filter") == "hold"
         rows = db.query(
-            "SELECT id, title, status, started_at, completed_at, on_hold, held_seconds "
+            "SELECT id, title, status, started_at, completed_at, on_hold, held_seconds, "
+            "is_daily, daily_of "
             "FROM tasks " + ("WHERE on_hold=1 " if only_hold else "") + "ORDER BY id DESC"
         )
         # Format timestamps for <input type=datetime-local> (YYYY-MM-DDThh:mm:ss)
@@ -379,6 +393,21 @@ def create_app():
         db.execute("DELETE FROM task_photos WHERE task_id=%s", (task_id,))
         db.execute("DELETE FROM tasks WHERE id=%s", (task_id,))
         return redirect(url_for("manage_tasks", filter=request.form.get("filter") or None))
+
+    @app.route("/manage/tasks/<int:task_id>/daily", methods=["POST"])
+    @manager_required
+    def manage_task_daily(task_id):
+        """Toggle a task as a daily recurring template. On => hidden from operators
+        and a dated 'DAILY - <date> - ...' instance is spawned each day."""
+        t = db.query("SELECT is_daily FROM tasks WHERE id=%s", (task_id,), one=True)
+        if not t:
+            abort(404)
+        new = 0 if t["is_daily"] else 1
+        db.execute("UPDATE tasks SET is_daily=%s WHERE id=%s", (new, task_id))
+        if new:
+            ensure_todays_dailies()
+        return redirect(url_for("manage_tasks", saved=task_id,
+                                filter=request.form.get("filter") or None))
 
     @app.route("/tech")
     def tech_list():
@@ -471,10 +500,28 @@ def create_app():
                 if r["before_path"] or r["after_path"] or r["progress"]]
         return render_template("photos.html", tasks=rows, d_from=d_from, d_to=d_to)
 
+    def ensure_todays_dailies():
+        """Create today's instance for each daily template that lacks one. Instances
+        are normal tasks titled 'DAILY - <date> - <template>' with daily_of set;
+        templates (is_daily=1) are never shown to operators themselves."""
+        today = today_local()
+        now = now_local().strftime("%Y-%m-%d %H:%M:%S")
+        for tpl in db.query("SELECT id, title FROM tasks WHERE is_daily=1"):
+            has = db.query("SELECT 1 FROM tasks WHERE daily_of=%s AND DATE(created_at)=%s",
+                           (tpl["id"], today), one=True)
+            if not has:
+                db.execute(
+                    "INSERT INTO tasks (title, created_at, daily_of) VALUES (%s, %s, %s)",
+                    ("DAILY - %s - %s" % (today, tpl["title"]), now, tpl["id"]),
+                )
+
     # --------------------------------------------------------------------- API
     @app.route("/api/tasks", methods=["GET"])
     def api_list_tasks():
-        """All non-completed tasks for technicians (plus today's completed)."""
+        """All non-completed tasks for technicians (plus today's completed).
+        Daily templates are hidden; only today's daily instances are shown."""
+        ensure_todays_dailies()
+        today = today_local()
         # On-hold jobs sort to the very bottom (below completed); otherwise
         # started first, then open, then completed. Works on sqlite and mysql.
         order_sql = ("CASE WHEN on_hold=1 THEN 3 "
@@ -485,11 +532,12 @@ def create_app():
             SELECT id, title, status, is_extra, is_rent, client_key, on_hold,
                    created_at, started_at, completed_at
             FROM tasks
-            WHERE status <> 'completed'
-               OR DATE(completed_at) = %s
+            WHERE (status <> 'completed' OR DATE(completed_at) = %s)
+              AND is_daily = 0
+              AND (daily_of IS NULL OR DATE(created_at) = %s)
             ORDER BY {order_sql}, id DESC
             """,
-            (today_local(),),
+            (today, today),
         )
         for r in rows:
             for k in ("created_at", "started_at", "completed_at"):
@@ -524,10 +572,19 @@ def create_app():
         created_at = now_local().strftime("%Y-%m-%d %H:%M:%S")
         created = []
         for title in titles:
-            new_id = db.execute(
-                "INSERT INTO tasks (title, created_at) VALUES (%s, %s)", (title, created_at)
-            )
-            created.append({"id": new_id, "title": title, "status": "open"})
+            daily, clean = split_daily_prefix(title)
+            if daily:
+                # A 'DAILY ...' line becomes a hidden recurring template.
+                new_id = db.execute(
+                    "INSERT INTO tasks (title, created_at, is_daily) VALUES (%s, %s, 1)",
+                    (clean, created_at),
+                )
+            else:
+                new_id = db.execute(
+                    "INSERT INTO tasks (title, created_at) VALUES (%s, %s)", (title, created_at)
+                )
+            created.append({"id": new_id, "title": clean if daily else title, "status": "open"})
+        ensure_todays_dailies()   # spawn today's instances for any new daily templates
         return jsonify({"created": created, "count": len(created)}), 201
 
     @app.route("/api/tasks/extra", methods=["POST"])

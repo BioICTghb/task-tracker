@@ -27,6 +27,7 @@
       <div class="mb-1">
         <span class="badge text-bg-{{ 'success' if t.status == 'completed' else 'warning' if t.status == 'started' else 'secondary' }}">#{{ t.id }} · {{ t.status }}</span>
         {% if t.on_hold %}<span class="badge text-bg-dark ms-1">ON HOLD</span>{% endif %}
+        {% if t.is_daily %}<span class="badge text-bg-primary ms-1">DAILY</span>{% endif %}
       </div>
       <textarea name="title" class="form-control mb-2" rows="2" required>{{ t.title }}</textarea>
       <div class="row g-2 mb-2">
@@ -44,6 +45,12 @@
               class="btn btn-sm {{ 'btn-dark' if t.on_hold else 'btn-outline-dark' }}">
         {{ 'Take off hold' if t.on_hold else 'Put on hold' }}
       </button>
+      {% if not t.daily_of %}
+      <button formaction="/manage/tasks/{{ t.id }}/daily" formmethod="post" formnovalidate
+              class="btn btn-sm {{ 'btn-primary' if t.is_daily else 'btn-outline-primary' }}">
+        {{ 'Stop daily' if t.is_daily else 'Make daily' }}
+      </button>
+      {% endif %}
       <button formaction="/manage/tasks/{{ t.id }}/delete" formmethod="post" formnovalidate
               class="btn btn-sm btn-outline-danger float-end"
               onclick="return confirm('Delete task #{{ t.id }}? This permanently removes the task and its photos.');">
