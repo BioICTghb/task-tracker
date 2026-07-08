@@ -29,6 +29,7 @@ function badge(status, onHold) {
 
 // Badge marking a job as RENT (rent-paying) or EXTRA (unplanned); "" for normal.
 function kindTag(t) {
+  if (t.daily_of) return ' <span class="badge text-bg-success">DAILY</span>';
   if (t.is_rent || t.kind === "rent") return ' <span class="badge text-bg-primary">RENT</span>';
   if (t.is_extra || t.kind === "extra") return ' <span class="badge text-bg-info">EXTRA</span>';
   return "";

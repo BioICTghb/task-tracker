@@ -431,7 +431,7 @@ def create_app():
         rows = db.query(
             """
             SELECT t.id, t.title, t.status, t.created_at, t.started_at, t.completed_at,
-                   t.is_extra, t.is_rent, t.started_by, t.completed_by, t.held_seconds,
+                   t.is_extra, t.is_rent, t.daily_of, t.started_by, t.completed_by, t.held_seconds,
                    bp.file_path AS before_path, bp.timestamp AS before_ts,
                    ap.file_path AS after_path,  ap.timestamp AS after_ts
             FROM tasks t
@@ -522,14 +522,15 @@ def create_app():
         Daily templates are hidden; only today's daily instances are shown."""
         ensure_todays_dailies()
         today = today_local()
-        # On-hold jobs sort to the very bottom (below completed); otherwise
-        # started first, then open, then completed. Works on sqlite and mysql.
-        order_sql = ("CASE WHEN on_hold=1 THEN 3 "
-                     "WHEN status='started' THEN 0 "
-                     "WHEN status='open' THEN 1 ELSE 2 END")
+        # Order: today's (unfinished) dailies first, then started, then open, then
+        # completed, with on-hold at the very bottom. Works on sqlite and mysql.
+        order_sql = ("CASE WHEN on_hold=1 THEN 4 "
+                     "WHEN daily_of IS NOT NULL AND status <> 'completed' THEN 0 "
+                     "WHEN status='started' THEN 1 "
+                     "WHEN status='open' THEN 2 ELSE 3 END")
         rows = db.query(
             f"""
-            SELECT id, title, status, is_extra, is_rent, client_key, on_hold,
+            SELECT id, title, status, is_extra, is_rent, daily_of, client_key, on_hold,
                    created_at, started_at, completed_at
             FROM tasks
             WHERE (status <> 'completed' OR DATE(completed_at) = %s)
