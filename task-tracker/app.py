@@ -14,7 +14,7 @@ from zoneinfo import ZoneInfo
 from functools import wraps
 
 from flask import (
-    Flask, render_template, request, jsonify, send_from_directory, abort,
+    Flask, render_template, request, jsonify, send_from_directory, send_file, abort,
     session, redirect, url_for, g,
 )
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -656,6 +656,25 @@ def create_app():
             alt = {".jpg": ".jpeg", ".jpeg": ".jpg"}.get(ext.lower())
             if alt and os.path.exists(os.path.join(root, base + alt)):
                 filename = base + alt
+
+        # Optional ?w=<px>: serve a downscaled, cached JPEG. Used by the report /
+        # photo pages so printed PDFs stay small; full-size is served otherwise
+        # (tap-to-open still shows the original).
+        w = request.args.get("w", type=int)
+        if w and 0 < w <= 2000 and filename.lower().endswith((".jpg", ".jpeg")):
+            src = os.path.abspath(os.path.join(root, filename))
+            if src.startswith(os.path.abspath(root)) and os.path.exists(src):
+                cache = os.path.join(root, ".thumbs", "w%d" % w, filename)
+                try:
+                    if not os.path.exists(cache) or os.path.getmtime(cache) < os.path.getmtime(src):
+                        os.makedirs(os.path.dirname(cache), exist_ok=True)
+                        img = ImageOps.exif_transpose(Image.open(src)).convert("RGB")
+                        if img.width > w:
+                            img = img.resize((w, round(img.height * w / img.width)))
+                        img.save(cache, "JPEG", quality=72)
+                    return send_file(cache, mimetype="image/jpeg")
+                except Exception:
+                    pass  # fall through to the original on any failure
         return send_from_directory(root, filename)
 
     # PWA files must be served from the site root scope

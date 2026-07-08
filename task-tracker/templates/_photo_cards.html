@@ -14,7 +14,7 @@
         <div class="text-muted small mb-1">BEFORE{% if t.before_ts %} · {{ t.before_ts }}{% endif %}</div>
         {% if t.before_path %}
           <a href="/uploads/{{ t.before_path }}" target="_blank">
-            <img src="/uploads/{{ t.before_path }}" class="photo-full" alt="Job {{ t.id }} before">
+            <img src="/uploads/{{ t.before_path }}?w=1000" class="photo-full" alt="Job {{ t.id }} before">
           </a>
         {% else %}<div class="photo-missing">no photo</div>{% endif %}
       </div>
@@ -22,7 +22,7 @@
         <div class="text-muted small mb-1">AFTER{% if t.after_ts %} · {{ t.after_ts }}{% endif %}</div>
         {% if t.after_path %}
           <a href="/uploads/{{ t.after_path }}" target="_blank">
-            <img src="/uploads/{{ t.after_path }}" class="photo-full" alt="Job {{ t.id }} after">
+            <img src="/uploads/{{ t.after_path }}?w=1000" class="photo-full" alt="Job {{ t.id }} after">
           </a>
         {% else %}<div class="photo-missing">no photo</div>{% endif %}
       </div>
@@ -34,7 +34,7 @@
       {% for p in t.progress %}
       <div class="col-3">
         <a href="/uploads/{{ p.file_path }}" target="_blank">
-          <img src="/uploads/{{ p.file_path }}" class="photo-thumb" alt="Job {{ t.id }} progress">
+          <img src="/uploads/{{ p.file_path }}?w=520" class="photo-thumb" alt="Job {{ t.id }} progress">
         </a>
       </div>
       {% endfor %}
