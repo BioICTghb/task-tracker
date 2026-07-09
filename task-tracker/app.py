@@ -431,12 +431,7 @@ def create_app():
         # is fully cacheable and works offline.
         return render_template("tech_extra.html")
 
-    def fetch_range(d_from, d_to):
-        """Jobs finished (completed) between d_from and d_to (inclusive), with photos + duration.
-        Keyed on completion date so the report shows what was actually finished that day,
-        regardless of when the job was created; unfinished jobs are excluded."""
-        rows = db.query(
-            """
+    _JOB_SELECT = """
             SELECT t.id, t.title, t.status, t.created_at, t.started_at, t.completed_at,
                    t.is_extra, t.is_rent, t.daily_of, t.started_by, t.completed_by, t.held_seconds,
                    bp.file_path AS before_path, bp.timestamp AS before_ts,
@@ -444,12 +439,11 @@ def create_app():
             FROM tasks t
             LEFT JOIN task_photos bp ON bp.task_id = t.id AND bp.photo_type = 'before'
             LEFT JOIN task_photos ap ON ap.task_id = t.id AND ap.photo_type = 'after'
-            WHERE DATE(t.completed_at) BETWEEN %s AND %s
-            ORDER BY t.completed_at, t.id
-            """,
-            (d_from, d_to),
-        )
-        # Duration computed in Python so the SQL stays portable across backends.
+    """
+
+    def _enrich_jobs(rows):
+        """Add duration, date labels, and progress photos so rows render in the
+        report table and photo cards (shared by completed and in-progress lists)."""
         for r in rows:
             r["duration_s"] = None
             r["progress"] = []
@@ -482,6 +476,15 @@ def create_app():
                 by_id[p["task_id"]]["progress"].append(p)
         return rows
 
+    def fetch_range(d_from, d_to):
+        """Jobs finished (completed) between d_from and d_to (inclusive), with photos +
+        duration. Keyed on completion date; unfinished jobs are excluded."""
+        rows = db.query(
+            _JOB_SELECT + " WHERE DATE(t.completed_at) BETWEEN %s AND %s ORDER BY t.completed_at, t.id",
+            (d_from, d_to),
+        )
+        return _enrich_jobs(rows)
+
     def parse_range():
         """Read from/to (or legacy single `date`) and return a sorted (from, to)."""
         today = today_local()
@@ -492,18 +495,14 @@ def create_app():
         return d_from, d_to
 
     def fetch_started(d_from, d_to):
-        """Jobs currently in progress (started, not finished) whose start falls in
-        the selected range — shown on a separate 'In progress' page of the report."""
-        return db.query(
-            """
-            SELECT t.id, t.title, t.started_at, t.started_by,
-                   t.is_extra, t.is_rent, t.daily_of
-            FROM tasks t
-            WHERE t.status = 'started' AND DATE(t.started_at) BETWEEN %s AND %s
-            ORDER BY t.started_at, t.id
-            """,
+        """Jobs in progress (started, not finished) whose start falls in the range —
+        same rich photo data so they render as photo cards on their own report page."""
+        rows = db.query(
+            _JOB_SELECT + " WHERE t.status='started' AND DATE(t.started_at) BETWEEN %s AND %s"
+            " ORDER BY t.started_at, t.id",
             (d_from, d_to),
         )
+        return _enrich_jobs(rows)
 
     @app.route("/report")
     @manager_required

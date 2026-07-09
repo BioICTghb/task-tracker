@@ -66,9 +66,18 @@
     {% endfor %}
   </tbody>
 </table>
+
+<!-- Completed jobs' photos: hidden on screen (use the Photos button), printed
+     one page per job. Only when something has a photo, to avoid a blank page. -->
+{% set any_photos = tasks|selectattr('before_path')|first or tasks|selectattr('after_path')|first or tasks|selectattr('progress')|first %}
+{% if any_photos %}
+<div class="print-only print-photos">
+  {% include "_photo_cards.html" %}
+</div>
+{% endif %}
 {% endif %}
 
-{# In-progress jobs (started, not finished) — its own page when printing #}
+{# In-progress jobs (started, not finished) — same style, on their own page(s) #}
 {% if started %}
 <div class="{{ 'page-break' if tasks }}">
   <h2 class="h5 mb-3 mt-4">In progress — started, not yet finished ({{ span }})</h2>
@@ -88,15 +97,11 @@
     </tbody>
   </table>
 </div>
-{% endif %}
-
-<!-- Photos printed with the report; hidden on screen (use the Photos button).
-     Only when something actually has a photo, to avoid an empty page. -->
-{% if tasks %}
-{% set any_photos = tasks|selectattr('before_path')|first or tasks|selectattr('after_path')|first or tasks|selectattr('progress')|first %}
-{% if any_photos %}
+<!-- In-progress jobs' photos: same photo-card style, printed one page per job. -->
+{% set started_photos = started|selectattr('before_path')|first or started|selectattr('after_path')|first or started|selectattr('progress')|first %}
+{% if started_photos %}
 <div class="print-only print-photos">
-  {% include "_photo_cards.html" %}
+  {% with tasks=started %}{% include "_photo_cards.html" %}{% endwith %}
 </div>
 {% endif %}
 {% endif %}
