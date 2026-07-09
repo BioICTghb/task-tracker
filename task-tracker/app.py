@@ -36,7 +36,7 @@ except Exception:  # HEIC support optional; JPEG/PNG still handled
 BRUSSELS = ZoneInfo("Europe/Brussels")
 
 # App version — bump this on each release. Shown in the footer of every page.
-APP_VERSION = "1.2.0"
+APP_VERSION = "1.3.0"
 
 # Operators who live on site and log rent hours — only they see the Rent button.
 RENT_USERNAMES = {"taras_d", "ivan_d", "sebastian_r", "tomasz_m", "sebastien_p"}
