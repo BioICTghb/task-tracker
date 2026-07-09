@@ -491,11 +491,26 @@ def create_app():
             d_from, d_to = d_to, d_from
         return d_from, d_to
 
+    def fetch_started(d_from, d_to):
+        """Jobs currently in progress (started, not finished) whose start falls in
+        the selected range — shown on a separate 'In progress' page of the report."""
+        return db.query(
+            """
+            SELECT t.id, t.title, t.started_at, t.started_by,
+                   t.is_extra, t.is_rent, t.daily_of
+            FROM tasks t
+            WHERE t.status = 'started' AND DATE(t.started_at) BETWEEN %s AND %s
+            ORDER BY t.started_at, t.id
+            """,
+            (d_from, d_to),
+        )
+
     @app.route("/report")
     @manager_required
     def report():
         d_from, d_to = parse_range()
         return render_template("report.html", tasks=fetch_range(d_from, d_to),
+                               started=fetch_started(d_from, d_to),
                                d_from=d_from, d_to=d_to)
 
     @app.route("/photos")

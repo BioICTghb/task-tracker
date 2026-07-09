@@ -85,6 +85,8 @@
 
   /* Photos print after the report table, starting on a fresh page */
   .print-photos { page-break-before: always; }
+  /* The in-progress section prints on its own page */
+  .page-break { page-break-before: always; }
   .photo-card { page-break-inside: avoid; }
   /* Keep the uniform frames when printing too, for a clean page layout */
   .photo-full { width: 100%; aspect-ratio: 4 / 3; object-fit: cover; }

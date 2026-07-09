@@ -29,9 +29,11 @@
 
 <h2 class="h5 mb-3 print-only">Task Report — {{ span }}</h2>
 
-{% if not tasks %}
+{% if not tasks and not started %}
   <div class="alert alert-info">No tasks for {{ span }}.</div>
-{% else %}
+{% endif %}
+
+{% if tasks %}
 <table class="table table-bordered align-middle report-table">
   <thead class="table-light">
     <tr>
@@ -64,9 +66,33 @@
     {% endfor %}
   </tbody>
 </table>
+{% endif %}
 
-<!-- Printed together with the report; hidden on screen (use the Photos button there).
-     Only rendered when something actually has a photo, to avoid an empty page. -->
+{# In-progress jobs (started, not finished) — its own page when printing #}
+{% if started %}
+<div class="{{ 'page-break' if tasks }}">
+  <h2 class="h5 mb-3 mt-4">In progress — started, not yet finished ({{ span }})</h2>
+  <table class="table table-bordered align-middle">
+    <thead class="table-light">
+      <tr><th>ID</th><th>Started</th><th>Title</th><th>Started by</th></tr>
+    </thead>
+    <tbody>
+      {% for t in started %}
+      <tr>
+        <td>{{ t.id }}</td>
+        <td>{{ t.started_at }}</td>
+        <td>{{ t.title }}{% if t.daily_of %} <span class="badge text-bg-success">DAILY</span>{% elif t.is_rent %} <span class="badge text-bg-primary">RENT</span>{% elif t.is_extra %} <span class="badge text-bg-info">EXTRA</span>{% endif %}</td>
+        <td>{{ t.started_by or "—" }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+
+<!-- Photos printed with the report; hidden on screen (use the Photos button).
+     Only when something actually has a photo, to avoid an empty page. -->
+{% if tasks %}
 {% set any_photos = tasks|selectattr('before_path')|first or tasks|selectattr('after_path')|first or tasks|selectattr('progress')|first %}
 {% if any_photos %}
 <div class="print-only print-photos">
