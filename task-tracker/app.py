@@ -303,16 +303,21 @@ def create_app():
     def manage_tasks():
         ensure_todays_dailies()
         flt = request.args.get("filter")
+        params = ()
         if flt == "hold":
             where = "WHERE on_hold=1 "
         elif flt == "daily":
             where = "WHERE is_daily=1 "            # the recurring 'master' templates
         else:
-            where = "WHERE is_daily=0 "            # normal view hides daily masters
+            # Normal view: hide daily masters, and hide daily instances once their
+            # day has passed (only today's remain) so they don't accumulate.
+            where = "WHERE is_daily=0 AND (daily_of IS NULL OR DATE(created_at)=%s) "
+            params = (today_local(),)
         rows = db.query(
             "SELECT id, title, status, started_at, completed_at, on_hold, held_seconds, "
             "is_daily, daily_of "
-            "FROM tasks " + where + "ORDER BY id DESC"
+            "FROM tasks " + where + "ORDER BY id DESC",
+            params,
         )
         # Format timestamps for <input type=datetime-local> (YYYY-MM-DDThh:mm:ss)
         for r in rows:
