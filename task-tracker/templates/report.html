@@ -29,6 +29,21 @@
 
 <h2 class="h5 mb-3 print-only">Task Report — {{ span }}</h2>
 
+{% if summary.total %}
+<div class="report-summary d-flex align-items-center gap-4 mb-4 flex-wrap">
+  <svg class="report-pie" viewBox="0 0 180 180" width="150" height="150" role="img"
+       aria-label="Task status pie chart">
+    {% for p in summary.paths %}<path d="{{ p.d }}" fill="{{ p.color }}"></path>{% endfor %}
+  </svg>
+  <div>
+    <div class="fw-semibold mb-2">Status — {{ span }} · {{ summary.total }} task{{ '' if summary.total == 1 else 's' }}</div>
+    {% for s in summary.segments %}{% if s.count %}
+    <div class="small mb-1"><span class="pie-key" style="background:{{ s.color }}"></span>{{ s.label }}: <strong>{{ s.count }}</strong> ({{ '%.0f'|format(s.pct) }}%)</div>
+    {% endif %}{% endfor %}
+  </div>
+</div>
+{% endif %}
+
 {% if not tasks and not started %}
   <div class="alert alert-info">No tasks for {{ span }}.</div>
 {% endif %}

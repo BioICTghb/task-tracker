@@ -9,6 +9,7 @@ Designed and developed by Sébastien Poncelet.
 Copyright (c) Sébastien Poncelet. All rights reserved.
 """
 import os
+import math
 from datetime import datetime, timezone, timedelta
 from zoneinfo import ZoneInfo
 from functools import wraps
@@ -509,12 +510,62 @@ def create_app():
         )
         return _enrich_jobs(rows)
 
+    def report_summary(d_from, d_to):
+        """Status breakdown of the day's tasks (by creation date), with SVG pie
+        slices, so the manager sees done/started/open/extra at a glance."""
+        rows = db.query(
+            "SELECT is_extra, is_rent, status, COUNT(*) AS n FROM tasks "
+            "WHERE is_daily=0 AND DATE(created_at) BETWEEN %s AND %s "
+            "GROUP BY is_extra, is_rent, status",
+            (d_from, d_to),
+        )
+        counts = {"Completed": 0, "Started": 0, "Open": 0, "Extra": 0}
+        for r in rows:
+            if r["is_extra"] or r["is_rent"]:
+                counts["Extra"] += r["n"]
+            elif r["status"] == "completed":
+                counts["Completed"] += r["n"]
+            elif r["status"] == "started":
+                counts["Started"] += r["n"]
+            else:
+                counts["Open"] += r["n"]
+        colors = {"Completed": "#198754", "Started": "#ffc107", "Open": "#6c757d", "Extra": "#0dcaf0"}
+        order = ["Completed", "Started", "Open", "Extra"]
+        total = sum(counts.values())
+        segments = [{"label": k, "count": counts[k], "color": colors[k],
+                     "pct": (counts[k] / total * 100 if total else 0)} for k in order]
+
+        # Build SVG pie slice paths (radius 88, centred at 90,90; start at top).
+        paths = []
+        cx = cy = 90.0
+        rad = 88.0
+        ang = -math.pi / 2
+        for s in segments:
+            if not s["count"]:
+                continue
+            frac = s["count"] / total
+            if frac >= 0.99995:   # a single full-circle slice
+                paths.append({"color": s["color"],
+                              "d": "M %g %g a %g %g 0 1 0 %g 0 a %g %g 0 1 0 %g 0"
+                              % (cx - rad, cy, rad, rad, 2 * rad, rad, rad, -2 * rad)})
+                break
+            a2 = ang + frac * 2 * math.pi
+            x1, y1 = cx + rad * math.cos(ang), cy + rad * math.sin(ang)
+            x2, y2 = cx + rad * math.cos(a2), cy + rad * math.sin(a2)
+            large = 1 if frac > 0.5 else 0
+            paths.append({"color": s["color"],
+                          "d": "M %g %g L %.2f %.2f A %g %g 0 %d 1 %.2f %.2f Z"
+                          % (cx, cy, x1, y1, rad, rad, large, x2, y2)})
+            ang = a2
+        return {"segments": segments, "total": total, "paths": paths}
+
     @app.route("/report")
     @manager_required
     def report():
         d_from, d_to = parse_range()
         return render_template("report.html", tasks=fetch_range(d_from, d_to),
                                started=fetch_started(d_from, d_to),
+                               summary=report_summary(d_from, d_to),
                                d_from=d_from, d_to=d_to)
 
     @app.route("/photos")

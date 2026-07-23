@@ -8,6 +8,11 @@
 }
 
 .task-card .task-title { font-size: 1.25rem; font-weight: 600; }
+/* Report status pie + legend */
+.report-pie { flex: none; }
+.pie-key { display: inline-block; width: .8rem; height: .8rem; border-radius: 2px;
+  margin-right: .4rem; vertical-align: middle; }
+
 .task-card { transition: transform .05s; }
 .task-card:active { transform: scale(0.99); }
 /* Parked tasks: greyed out so operators can see they're paused, not active. */
