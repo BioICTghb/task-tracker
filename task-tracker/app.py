@@ -511,13 +511,15 @@ def create_app():
         return _enrich_jobs(rows)
 
     def report_summary(d_from, d_to):
-        """Status breakdown of the day's tasks (by creation date), with SVG pie
-        slices, so the manager sees done/started/open/extra at a glance."""
+        """Status breakdown of the day's tasks, with SVG pie slices, so the manager
+        sees done/started/open/extra at a glance. Scope = tasks created that day OR
+        completed that day, so completions of carried-over jobs are counted."""
         rows = db.query(
             "SELECT is_extra, is_rent, status, COUNT(*) AS n FROM tasks "
-            "WHERE is_daily=0 AND DATE(created_at) BETWEEN %s AND %s "
+            "WHERE is_daily=0 AND (DATE(created_at) BETWEEN %s AND %s "
+            "                      OR DATE(completed_at) BETWEEN %s AND %s) "
             "GROUP BY is_extra, is_rent, status",
-            (d_from, d_to),
+            (d_from, d_to, d_from, d_to),
         )
         counts = {"Completed": 0, "Started": 0, "Open": 0, "Extra": 0}
         for r in rows:
