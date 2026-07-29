@@ -57,6 +57,14 @@ def _sqlite_init_schema(conn):
           active INTEGER NOT NULL DEFAULT 1,
           created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
         );
+        CREATE TABLE IF NOT EXISTS schedule_cells (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          work_date TEXT NOT NULL,
+          col_index INTEGER NOT NULL,
+          shift TEXT NOT NULL DEFAULT '',
+          color TEXT NOT NULL DEFAULT '',
+          UNIQUE (work_date, col_index)
+        );
         """
     )
     # Idempotent migrations for databases created before these columns existed.
@@ -79,6 +87,7 @@ def _sqlite_init_schema(conn):
         # instance is generated with daily_of set to that template's id.
         "ALTER TABLE tasks ADD COLUMN is_daily INTEGER NOT NULL DEFAULT 0",
         "ALTER TABLE tasks ADD COLUMN daily_of INTEGER",
+        "ALTER TABLE schedule_cells ADD COLUMN color TEXT NOT NULL DEFAULT ''",
     ):
         try:
             conn.execute(ddl)

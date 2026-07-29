@@ -2,11 +2,46 @@
 {% block title %}My Tasks{% endblock %}
 
 {% block content %}
-<h1 class="h3 mb-3">My Tasks</h1>
+<div class="dashboard-greeting d-flex justify-content-between align-items-center mb-3">
+  <div>
+    <div class="h4 mb-0">Hi, {{ current_user.name.split(' ')[0] }}</div>
+    <div class="text-muted small" id="today-label"></div>
+  </div>
+  <div class="avatar-circle">{{ current_user.name[0] }}</div>
+</div>
 
 <div class="d-flex gap-2 mb-3">
-  <button id="btn-extra" class="btn btn-info big-btn flex-fill">+ EXTRA JOB</button>
-  {% if show_rent %}<button id="btn-rent" class="btn btn-primary big-btn flex-fill">RENT</button>{% endif %}
+  <button id="btn-extra" class="icon-tile flex-fill">
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+    <span>Extra job</span>
+  </button>
+  {% if show_rent %}
+  <button id="btn-rent" class="icon-tile flex-fill">
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11l9-7 9 7"></path><path d="M5 10v9a1 1 0 0 0 1 1h3v-6h6v6h3a1 1 0 0 0 1-1v-9"></path></svg>
+    <span>Rent</span>
+  </button>
+  {% endif %}
+</div>
+
+<div id="my-schedule-card" class="card mb-3 d-none">
+  <div class="card-body py-2">
+    <div class="d-flex align-items-center justify-content-between mb-1">
+      <span class="small text-muted">My schedule</span>
+      <span class="small text-muted" id="week-range-label"></span>
+    </div>
+    <div class="d-flex align-items-center justify-content-center gap-2 mb-2">
+      <button type="button" id="week-prev" class="week-nav-btn" aria-label="Previous week">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"></polyline></svg>
+      </button>
+      <button type="button" id="week-today" class="week-nav-btn week-today-btn" aria-label="Current week" title="Jump to current week">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"></circle><circle cx="12" cy="12" r="1.2" fill="currentColor" stroke="none"></circle></svg>
+      </button>
+      <button type="button" id="week-next" class="week-nav-btn" aria-label="Next week">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>
+      </button>
+    </div>
+    <div id="schedule-chips" class="d-flex gap-2"></div>
+  </div>
 </div>
 
 <div id="task-list" class="d-grid gap-3">
@@ -20,6 +55,9 @@ function esc(s) {
   return String(s == null ? "" : s).replace(/[&<>"']/g,
     (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 }
+
+document.getElementById("today-label").textContent =
+  new Date().toLocaleDateString(undefined, { weekday: "long", day: "numeric", month: "long" });
 
 function badge(status, onHold) {
   if (onHold) return '<span class="badge text-bg-dark">ON HOLD</span>';
@@ -122,6 +160,35 @@ if (rentBtn) rentBtn.addEventListener("click",
   () => createUnplanned("rent", "Rent job — short description of the work"));
 
 load();
+
+// "My schedule": one week at a time, scrollable with prev/today/next.
+let scheduleOffset = 0;
+async function loadMySchedule() {
+  try {
+    const res = await fetch(`/api/my-schedule?offset=${scheduleOffset}`);
+    if (!res.ok) return;
+    const data = await res.json();
+    if (!data.on_roster) return;
+    document.getElementById("my-schedule-card").classList.remove("d-none");
+    document.getElementById("week-range-label").textContent = data.week_label || "";
+    document.getElementById("week-today").classList.toggle("active", scheduleOffset === 0);
+
+    const chips = document.getElementById("schedule-chips");
+    chips.innerHTML = data.days.map((d) => {
+      // Real Excel color-coding, kept as-is, with black text on top.
+      const style = d.color ? `background-color:${esc(d.color)}; color:#000;` : "";
+      const dayName = d.label.split(" ")[0];
+      return `<div class="schedule-chip" style="${style}">
+        <div class="schedule-chip-day">${esc(dayName)}</div>
+        <div class="schedule-chip-shift">${d.text ? esc(d.text) : "&mdash;"}</div>
+      </div>`;
+    }).join("");
+  } catch (e) { /* offline or not on the roster — just skip the widget */ }
+}
+document.getElementById("week-prev").addEventListener("click", () => { scheduleOffset -= 1; loadMySchedule(); });
+document.getElementById("week-next").addEventListener("click", () => { scheduleOffset += 1; loadMySchedule(); });
+document.getElementById("week-today").addEventListener("click", () => { scheduleOffset = 0; loadMySchedule(); });
+loadMySchedule();
 
 // Light auto-refresh so manager changes (e.g. a task put on hold, or newly
 // published tasks) appear without a manual reload. Only when the tab is visible

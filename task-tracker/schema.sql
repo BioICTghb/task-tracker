@@ -48,3 +48,14 @@ CREATE TABLE IF NOT EXISTS users (
   active        TINYINT NOT NULL DEFAULT 1,
   created_at    TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB;
+
+-- Work schedule grid: one row per (date, operator column). col_index (1-12) maps
+-- to the fixed operator list in app.py (SCHEDULE_OPERATORS).
+CREATE TABLE IF NOT EXISTS schedule_cells (
+  id          INT AUTO_INCREMENT PRIMARY KEY,
+  work_date   DATE NOT NULL,
+  col_index   TINYINT NOT NULL,
+  shift       VARCHAR(64) NOT NULL DEFAULT '',
+  color       VARCHAR(9) NOT NULL DEFAULT '',
+  UNIQUE KEY uniq_date_col (work_date, col_index)
+) ENGINE=InnoDB;

@@ -9,6 +9,7 @@ Designed and developed by Sébastien Poncelet.
 Copyright (c) Sébastien Poncelet. All rights reserved.
 """
 import os
+import re
 import math
 from datetime import datetime, timezone, timedelta
 from zoneinfo import ZoneInfo
@@ -45,6 +46,47 @@ RENT_USERNAMES = {"taras_d", "ivan_d", "sebastian_r", "tomasz_m", "sebastien_p"}
 # Roles with manager-level access (publish, report, edit, admin). 'developer' is
 # a manager with a different label.
 MANAGER_ROLES = {"manager", "developer"}
+
+# Work-schedule grid columns (C1-C12), fixed order matching the Excel sheet
+# managers currently keep shifts in.
+SCHEDULE_OPERATORS = [
+    "Savrii Anatolii", "Maksym Hnyp", "Marcin Piatkowski", "Tomasz Madry",
+    "Taras Dymkar", "Sebastian Rek", "Daniel Gorzynski", "Damian Meczykowski",
+    "Damian Garczynski", "Ivan Dymkar", "Savrii Volodymyr", "Bartek Berendt",
+]
+SCHEDULE_ROWS = 5  # Mon-Fri
+
+# Schedule cell colors that map to an actual shift (matches the swatches offered
+# on the Schedule page). Any other color (ADV/holiday/JV/other) or no color is
+# left out of the "who's on shift" report summary. Matching is nearest-color
+# (see schedule_shift_label below), not exact-hex — pasted colors from Excel
+# vary slightly by file/theme even for "the same" color.
+SCHEDULE_SHIFT_COLORS = {
+    "#92d050": "Early",
+    "#ffc000": "Day",
+    "#00b0f0": "Night",
+    "#ffffcc": "Drive",
+}
+SCHEDULE_SHIFT_MATCH_TOLERANCE = 60  # max RGB Euclidean distance to still count as a match
+
+
+def schedule_shift_label(hex_color):
+    """Nearest-color match against SCHEDULE_SHIFT_COLORS, within tolerance.
+    Returns None if the color is missing/unrecognized (blank, ADV, holiday, JV, etc.)."""
+    hex_color = (hex_color or "").strip().lstrip("#")
+    if len(hex_color) != 6:
+        return None
+    try:
+        r, g, b = (int(hex_color[i:i + 2], 16) for i in (0, 2, 4))
+    except ValueError:
+        return None
+    best_label, best_dist = None, SCHEDULE_SHIFT_MATCH_TOLERANCE
+    for ref_hex, label in SCHEDULE_SHIFT_COLORS.items():
+        rr, rg, rb = (int(ref_hex.lstrip("#")[i:i + 2], 16) for i in (0, 2, 4))
+        dist = ((r - rr) ** 2 + (g - rg) ** 2 + (b - rb) ** 2) ** 0.5
+        if dist < best_dist:
+            best_label, best_dist = label, dist
+    return best_label
 
 
 def now_local():
@@ -297,6 +339,160 @@ def create_app():
             return redirect(url_for("admin", msg="Keep at least one manager."))
         db.execute("DELETE FROM users WHERE id=%s", (uid,))
         return redirect(url_for("admin", msg="Operator removed."))
+
+    # ----------------------------------------------------------- work schedule
+    def _monday_of(d):
+        return d - timedelta(days=d.weekday())
+
+    def _month_bounds(year, month):
+        first = datetime(year, month, 1).date()
+        if month == 12:
+            nxt = datetime(year + 1, 1, 1).date()
+        else:
+            nxt = datetime(year, month + 1, 1).date()
+        return first, nxt - timedelta(days=1)
+
+    def _month_week_starts(first, last):
+        """Monday of each week (Mon-Fri block) that overlaps the given month."""
+        monday = _monday_of(first)
+        starts = []
+        while monday <= last:
+            starts.append(monday)
+            monday += timedelta(days=7)
+        return starts
+
+    @app.route("/schedule")
+    @manager_required
+    def schedule():
+        mo = request.args.get("month")
+        try:
+            anchor = datetime.strptime(mo, "%Y-%m").date() if mo else now_local().date()
+        except ValueError:
+            anchor = now_local().date()
+        year, month = anchor.year, anchor.month
+        first, last = _month_bounds(year, month)
+        week_starts = _month_week_starts(first, last)
+        range_from, range_to = week_starts[0], week_starts[-1] + timedelta(days=SCHEDULE_ROWS - 1)
+
+        rows = db.query(
+            "SELECT work_date, col_index, shift, color FROM schedule_cells "
+            "WHERE work_date BETWEEN %s AND %s",
+            (range_from.isoformat(), range_to.isoformat()),
+        )
+        grid = {}
+        for r in rows:
+            wd = r["work_date"] if isinstance(r["work_date"], str) else r["work_date"].isoformat()
+            grid[(wd, r["col_index"])] = {"text": r["shift"], "color": r["color"] or ""}
+        empty = {"text": "", "color": ""}
+
+        weeks = []
+        for wstart in week_starts:
+            dates = [wstart + timedelta(days=i) for i in range(SCHEDULE_ROWS)]
+            table = [
+                {
+                    "date": d.isoformat(),
+                    "label": d.strftime("%a %d %b"),
+                    "cells": [grid.get((d.isoformat(), c + 1), empty) for c in range(len(SCHEDULE_OPERATORS))],
+                }
+                for d in dates
+            ]
+            weeks.append({"week_start": wstart.isoformat(), "table": table})
+
+        prev_month = (year - 1, 12) if month == 1 else (year, month - 1)
+        next_month = (year + 1, 1) if month == 12 else (year, month + 1)
+        return render_template(
+            "schedule.html", operators=SCHEDULE_OPERATORS, weeks=weeks,
+            month_label=first.strftime("%B %Y"),
+            prev_month="%04d-%02d" % prev_month,
+            next_month="%04d-%02d" % next_month,
+        )
+
+    def _operator_col_for(display_name):
+        """Match a logged-in user's display name to a Schedule column, so an
+        operator can see their own shifts. None if they're not on the roster."""
+        dn = (display_name or "").strip().lower()
+        for i, name in enumerate(SCHEDULE_OPERATORS, start=1):
+            if name.strip().lower() == dn:
+                return i
+        return None
+
+    @app.route("/api/my-schedule")
+    def api_my_schedule():
+        """One week's shifts for the logged-in operator (matched by display name
+        against the Schedule roster). ?offset=N picks a week N weeks from the
+        current one (0 = this week, -1 = last week, 1 = next week, ...). Used by
+        the technician's task list to show a small 'my schedule' widget with a
+        prev/today/next week scroller."""
+        user = current_user() or {}
+        col = _operator_col_for(user.get("name"))
+        if not col:
+            return jsonify({"days": [], "on_roster": False})
+        try:
+            offset = int(request.args.get("offset", 0))
+        except ValueError:
+            offset = 0
+        offset = max(-52, min(52, offset))  # sane bounds against abuse
+        monday = _monday_of(now_local().date()) + timedelta(days=7 * offset)
+        days = [monday + timedelta(days=i) for i in range(SCHEDULE_ROWS)]
+        iso_days = [d.isoformat() for d in days]
+        placeholders = ",".join(["%s"] * len(iso_days))
+        rows = db.query(
+            f"SELECT work_date, shift, color FROM schedule_cells "
+            f"WHERE col_index=%s AND work_date IN ({placeholders})",
+            (col, *iso_days),
+        )
+        by_date = {}
+        for r in rows:
+            wd = r["work_date"] if isinstance(r["work_date"], str) else r["work_date"].isoformat()
+            by_date[wd] = r
+        out = []
+        for d in days:
+            iso = d.isoformat()
+            r = by_date.get(iso)
+            out.append({
+                "date": iso, "label": d.strftime("%a %d %b"),
+                "text": (r["shift"] if r else "") or "",
+                "color": (r["color"] if r else "") or "",
+            })
+        return jsonify({
+            "days": out, "on_roster": True, "offset": offset,
+            "week_label": f"{days[0].strftime('%d %b')} – {days[-1].strftime('%d %b')}",
+        })
+
+    _HEX_COLOR_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
+
+    @app.route("/api/schedule", methods=["POST"])
+    @manager_required
+    def api_save_schedule():
+        """Bulk-save the grid for one week. Body:
+        {"week_start": "YYYY-MM-DD",
+         "cells": [[{"text": "...", "color": "#rrggbb"}, ...12], ...5 rows]}."""
+        data = request.get_json(silent=True) or {}
+        try:
+            monday = datetime.strptime(data.get("week_start") or "", "%Y-%m-%d").date()
+        except ValueError:
+            return jsonify({"error": "invalid week_start"}), 400
+        cells = data.get("cells")
+        if not isinstance(cells, list) or len(cells) != SCHEDULE_ROWS or \
+           any(not isinstance(row, list) or len(row) != len(SCHEDULE_OPERATORS) for row in cells):
+            return jsonify({"error": "invalid cells"}), 400
+
+        upsert_sql = (
+            """INSERT INTO schedule_cells (work_date, col_index, shift, color) VALUES (%s, %s, %s, %s)
+               ON CONFLICT(work_date, col_index) DO UPDATE SET shift=excluded.shift, color=excluded.color"""
+            if db.IS_SQLITE else
+            """INSERT INTO schedule_cells (work_date, col_index, shift, color) VALUES (%s, %s, %s, %s)
+               ON DUPLICATE KEY UPDATE shift=VALUES(shift), color=VALUES(color)"""
+        )
+        for i, row in enumerate(cells):
+            d = (monday + timedelta(days=i)).isoformat()
+            for c, cell in enumerate(row):
+                cell = cell if isinstance(cell, dict) else {"text": cell, "color": ""}
+                text = (cell.get("text") or "").strip()[:64]
+                color = (cell.get("color") or "").strip()
+                color = color if _HEX_COLOR_RE.match(color) else ""
+                db.execute(upsert_sql, (d, c + 1, text, color))
+        return jsonify({"ok": True})
 
     # ------------------------------------------------ edit task descriptions (manager)
     @app.route("/manage/tasks")
@@ -561,6 +757,26 @@ def create_app():
             ang = a2
         return {"segments": segments, "total": total, "paths": paths}
 
+    def todays_shift_summary():
+        """Who's on which shift today (the day the report is viewed), from the
+        schedule's color-coded cells. Only Early/Day/Night/Drive are shown —
+        holidays, JV, and blank cells are left out."""
+        today = today_local()
+        rows = db.query(
+            "SELECT col_index, shift, color FROM schedule_cells WHERE work_date=%s", (today,)
+        )
+        by_col = {r["col_index"]: r for r in rows}
+        out = []
+        for i, name in enumerate(SCHEDULE_OPERATORS, start=1):
+            r = by_col.get(i)  # col_index is 1-based
+            if not r:
+                continue
+            label = schedule_shift_label(r["color"])
+            if not label:
+                continue
+            out.append({"name": name, "shift": label, "text": r["shift"]})
+        return {"date": today, "entries": out}
+
     @app.route("/report")
     @manager_required
     def report():
@@ -568,6 +784,7 @@ def create_app():
         return render_template("report.html", tasks=fetch_range(d_from, d_to),
                                started=fetch_started(d_from, d_to),
                                summary=report_summary(d_from, d_to),
+                               shift_summary=todays_shift_summary(),
                                d_from=d_from, d_to=d_to)
 
     @app.route("/photos")
