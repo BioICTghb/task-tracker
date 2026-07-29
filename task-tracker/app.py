@@ -409,12 +409,27 @@ def create_app():
 
     def _operator_col_for(display_name):
         """Match a logged-in user's display name to a Schedule column, so an
-        operator can see their own shifts. None if they're not on the roster."""
-        dn = (display_name or "").strip().lower()
+        operator can see their own shifts. Tolerant of abbreviated last names
+        (e.g. account "Sebastian R" vs roster "Sebastian Rek", matching the
+        first_l initial-only convention already used for usernames like
+        taras_d/ivan_d). None if they're not on the roster."""
+        dn_tokens = (display_name or "").strip().lower().split()
+        if not dn_tokens:
+            return None
+        matches = []
         for i, name in enumerate(SCHEDULE_OPERATORS, start=1):
-            if name.strip().lower() == dn:
-                return i
-        return None
+            name_tokens = name.strip().lower().split()
+            if not name_tokens or dn_tokens[0] != name_tokens[0]:
+                continue
+            if len(dn_tokens) == 1:
+                matches.append(i)  # first-name-only; resolved below only if unique
+                continue
+            dn_last, name_last = dn_tokens[-1], name_tokens[-1]
+            if dn_last == name_last or dn_last.startswith(name_last) or name_last.startswith(dn_last):
+                matches.append(i)
+        # Two roster entries can share a first name (e.g. two "Savrii"s) — only
+        # trust the match if it's unambiguous, otherwise don't guess.
+        return matches[0] if len(matches) == 1 else None
 
     @app.route("/api/my-schedule")
     def api_my_schedule():
