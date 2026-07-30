@@ -112,18 +112,39 @@ def asset_version(static_dir):
     return h.hexdigest()[:10]
 
 
-def parse_assignee(title, operator_names):
-    """Operator tagged in a published line with '@Name', or None.
+# Operators on one job are stored in tasks.assigned_to as a "A, B" list — jobs
+# are regularly shared ("Ivan Dymkar & Taras Dymkar"), and both need to see it.
+ASSIGN_SEP = ", "
 
-    Matches against the real operator display names (the same list the '@'
-    autocomplete offers), longest first so '@Damian Meczykowski' isn't cut short
-    by a '@Damian M' also on the roster. The '@Name' stays in the title: it reads
-    naturally for everyone and keeps the line exactly as the manager wrote it."""
-    low = (title or "").lower()
+
+def parse_assignees(title, operator_names):
+    """Every operator named in a published line, in the order they appear.
+
+    The '@' picker in the publish box inserts just the operator's name (the '@' is
+    only the trigger — the job reads cleaner without it), so names are matched
+    bare here; a leading '@' is still accepted for lines typed by hand.
+
+    Matched whole-word, longest name first, so 'Damian M' is not claimed from
+    inside 'Damian Meczykowski'. Because a match needs the operator's full display
+    name, an incidental mention is unlikely -- and a line that does name an
+    operator in full is fair to treat as theirs."""
+    text = title or ""
+    found = []                      # (position in text, name)
+    claimed = []                    # spans already taken by a longer name
     for name in sorted(operator_names or [], key=len, reverse=True):
-        if ("@" + name.lower()) in low:
-            return name
-    return None
+        pattern = r"(?<!\w)@?" + re.escape(name) + r"(?!\w)"
+        for mt in re.finditer(pattern, text, re.IGNORECASE):
+            if any(mt.start() < end and start < mt.end() for start, end in claimed):
+                continue            # inside a longer name already matched
+            claimed.append((mt.start(), mt.end()))
+            found.append((mt.start(), name))
+            break                   # one mention per operator is enough
+    return [name for _, name in sorted(found)]
+
+
+def assignees_of(value):
+    """tasks.assigned_to -> list of operator names."""
+    return [p.strip() for p in (value or "").split(",") if p.strip()]
 
 
 def now_local():
@@ -225,7 +246,7 @@ def create_app():
 
     def active_operators():
         """Display names of active operators — the '@' autocomplete list and the
-        vocabulary parse_assignee() matches published lines against."""
+        vocabulary parse_assignees() matches published lines against."""
         return [u["display_name"] for u in db.query(
             "SELECT display_name FROM users WHERE role='technician' AND active=1 "
             "ORDER BY display_name")]
@@ -688,7 +709,8 @@ def create_app():
         if title:
             # Re-read the @-tag from the edited text so assignment tracks the title.
             db.execute("UPDATE tasks SET title=%s, assigned_to=%s WHERE id=%s",
-                       (title, parse_assignee(title, active_operators()), task_id))
+                       (title, ASSIGN_SEP.join(parse_assignees(title, active_operators())) or None,
+                        task_id))
         # A hand-entered time "wins": flag it so later photo uploads won't overwrite it.
         # Clearing a field (None) drops the flag so the photo flow can set it again.
         db.execute(
@@ -1017,15 +1039,12 @@ def create_app():
         Daily templates are hidden; only today's daily instances are shown."""
         ensure_todays_dailies()
         today = today_local()
-        # Order: on-hold always at the very bottom; then jobs @-tagged for the
-        # operator looking at the list; then today's (unfinished) dailies, started,
-        # open, completed. Works on sqlite and mysql.
+        # Order: on-hold always at the very bottom; then today's (unfinished)
+        # dailies, started, open, completed. Works on sqlite and mysql.
         hold_sql = "CASE WHEN on_hold=1 THEN 1 ELSE 0 END"
-        mine_sql = "CASE WHEN assigned_to IS NOT NULL AND assigned_to=%s THEN 0 ELSE 1 END"
         status_sql = ("CASE WHEN daily_of IS NOT NULL AND status <> 'completed' THEN 0 "
                       "WHEN status='started' THEN 1 "
                       "WHEN status='open' THEN 2 ELSE 3 END")
-        me = (current_user() or {}).get("name") or ""
         rows = db.query(
             f"""
             SELECT id, title, status, is_extra, is_rent, daily_of, client_key, on_hold,
@@ -1034,10 +1053,17 @@ def create_app():
             WHERE (status <> 'completed' OR DATE(completed_at) = %s)
               AND is_daily = 0
               AND (daily_of IS NULL OR DATE(created_at) = %s)
-            ORDER BY {hold_sql}, {mine_sql}, {status_sql}, id DESC
+            ORDER BY {hold_sql}, {status_sql}, id DESC
             """,
-            (today, today, me),
+            (today, today),
         )
+        # Float the viewer's own jobs to the top, on-hold still last. Done here and
+        # not in SQL because a job can be shared by several operators ("A, B"),
+        # which no portable ORDER BY expresses cleanly. The sort is stable, so the
+        # ordering above survives within each group.
+        me = (current_user() or {}).get("name") or ""
+        rows.sort(key=lambda r: (1 if r["on_hold"] else 0,
+                                 0 if me and me in assignees_of(r["assigned_to"]) else 1))
         for r in rows:
             for k in ("created_at", "started_at", "completed_at"):
                 if isinstance(r[k], datetime):
@@ -1073,7 +1099,7 @@ def create_app():
         created = []
         for title in titles:
             daily, clean = split_daily_prefix(title)
-            assignee = parse_assignee(title, operators)
+            assignee = ASSIGN_SEP.join(parse_assignees(title, operators)) or None
             if daily:
                 # A 'DAILY ...' line becomes a hidden recurring template.
                 new_id = db.execute(

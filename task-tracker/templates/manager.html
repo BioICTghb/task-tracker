@@ -135,6 +135,9 @@ const OPERATORS = {{ operators|tojson }};
     if (!men || !matches[i]) return;
     const before = ta.value.slice(0, men.atIndex);   // text up to (excluding) '@'
     const after = ta.value.slice(men.end);
+    // The '@' is dropped on purpose — it's only the trigger for this picker, and
+    // the published job reads cleaner without it. The server still records the
+    // assignment: parse_assignee() matches the operator's name in the line.
     const insert = matches[i] + " ";
     ta.value = before + insert + after;
     const caret = (before + insert).length;

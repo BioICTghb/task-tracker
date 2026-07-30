@@ -81,18 +81,22 @@ function kindTag(t) {
 
 const MY_NAME = {{ current_user.name|tojson }};
 
-// Jobs the manager @-tagged for this operator: called out with a "FOR YOU" badge
-// and a highlighted edge (the API already sorts them to the top). Jobs tagged for
-// someone else name that person, so the floor can see at a glance whose it is.
+// A job can be shared by several operators ("Ivan Dymkar, Taras Dymkar"), so test
+// for membership, not equality.
+function isMine(t) {
+  return (t.assigned_to || "").split(",").some((n) => n.trim() === MY_NAME);
+}
+
+// The operator's own jobs get a "FOR YOU" badge and a highlighted edge (the API
+// already sorts them to the top). Someone else's job needs no badge — their name
+// is already in the task text.
 function assignTag(t) {
-  if (!t.assigned_to) return "";
-  if (t.assigned_to === MY_NAME) return ' <span class="badge text-bg-danger">FOR YOU</span>';
-  return ` <span class="badge text-bg-light border text-muted">${esc(t.assigned_to)}</span>`;
+  return isMine(t) ? ' <span class="badge text-bg-danger">FOR YOU</span>' : "";
 }
 
 function serverCard(t) {
   const tag = kindTag(t) + assignTag(t);
-  const mine = t.assigned_to && t.assigned_to === MY_NAME ? " task-mine" : "";
+  const mine = isMine(t) ? " task-mine" : "";
   // On-hold tasks are not workable: non-clickable, greyed-out card (no link).
   if (t.on_hold) {
     return `<div class="task-card card on-hold">

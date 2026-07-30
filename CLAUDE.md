@@ -69,11 +69,19 @@ not affect the live site.
   anchored at the caret (a hidden mirror `div` computes the `@`'s pixel position — textareas
   expose no caret coords). Filters as you type; ↑/↓ navigate, Tab/Enter or click select,
   Esc/click-outside close. The list is fed by `active_operators()`.
-- **Assignment**: `parse_assignee()` reads `@Name` from a published (or edited) line against
-  the active operator names, longest match first, into `tasks.assigned_to`. The `@Name` stays
-  in the title on purpose. `/api/tasks` sorts on-hold last, then the viewer's own jobs, then
-  the status order; their jobs get a "FOR YOU" badge + red edge (`.task-mine`). Daily
-  instances inherit the template's assignee.
+- **Assignment**: the `@` picker inserts only the operator's *name* (the `@` is just the
+  trigger — published jobs read cleaner without it). `parse_assignees()` then matches operator
+  names in the line **whole-word, longest first**, so `Damian M` is never taken from inside
+  `Damian Meczykowski`; a hand-typed `@Name` still parses. A job can be **shared** ("… Ivan
+  Dymkar & Taras Dymkar") — all matches are stored in `tasks.assigned_to` as a `", "` list
+  (`ASSIGN_SEP`), read back with `assignees_of()`. `/api/tasks` keeps on-hold last and floats
+  the viewer's own jobs up **in Python** (a shared list has no portable ORDER BY); those get a
+  "FOR YOU" badge + red edge (`.task-mine`). No assignee name is repeated in a badge — it's
+  already in the title. Daily instances inherit the template's assignees; editing a title
+  re-parses them.
+  > Caveat by design: any line containing an operator's full display name assigns them, even
+  > if the picker wasn't used. Full names rarely appear incidentally, and a line that does
+  > name someone in full is fair to treat as theirs.
 - **Shift-change warning**: `schedule_cells.updated_at` advances only on a real change
   (text or color), `users.schedule_seen_at` records acknowledgement;
   `/api/schedule-changes` → sticky banner on the operator list, cleared by
