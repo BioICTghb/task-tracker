@@ -206,7 +206,13 @@
         body: JSON.stringify({ week_start: weekStart, cells: grid }),
       });
       if (resp.ok) {
-        saveMsg.textContent = "Saved.";
+        // Name who will get a "your shift changed" notice, so the manager knows
+        // this save reaches the floor and isn't silent.
+        const data = await resp.json().catch(() => ({}));
+        const who = (data && data.notified) || [];
+        saveMsg.textContent = who.length
+          ? "Saved. Shift change flagged to: " + who.join(", ") + "."
+          : "Saved.";
         saveMsg.classList.remove("d-none", "alert-danger");
         saveMsg.classList.add("alert-success");
       } else {
@@ -214,7 +220,7 @@
         saveMsg.classList.remove("d-none", "alert-success");
         saveMsg.classList.add("alert-danger");
       }
-      setTimeout(() => saveMsg.classList.add("d-none"), 2500);
+      setTimeout(() => saveMsg.classList.add("d-none"), 6000);
     });
   });
 })();

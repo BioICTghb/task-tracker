@@ -97,7 +97,10 @@
      one page per job. Only when something has a photo, to avoid a blank page. -->
 {% set any_photos = tasks|selectattr('before_path')|first or tasks|selectattr('after_path')|first or tasks|selectattr('progress')|first %}
 {% if any_photos %}
-<div class="print-only print-photos">
+<button type="button" class="btn btn-outline-secondary btn-sm mb-3 no-print" data-photo-toggle="#report-photos">
+  Show photos
+</button>
+<div id="report-photos" class="print-photos d-none d-print-block">
   {% include "_photo_cards.html" %}
 </div>
 {% endif %}
@@ -126,7 +129,10 @@
 <!-- In-progress jobs' photos: same photo-card style, printed one page per job. -->
 {% set started_photos = started|selectattr('before_path')|first or started|selectattr('after_path')|first or started|selectattr('progress')|first %}
 {% if started_photos %}
-<div class="print-only print-photos">
+<button type="button" class="btn btn-outline-secondary btn-sm mb-3 no-print" data-photo-toggle="#started-photos">
+  Show photos
+</button>
+<div id="started-photos" class="print-photos d-none d-print-block">
   {% with tasks=started %}{% include "_photo_cards.html" %}{% endwith %}
 </div>
 {% endif %}
@@ -144,5 +150,16 @@ function applyMode() {
 document.getElementById("mode-single").addEventListener("change", applyMode);
 document.getElementById("mode-range").addEventListener("change", applyMode);
 applyMode();
+
+// Photo cards are always in the page (they print on their own pages); on screen
+// they start collapsed so the report stays a quick overview.
+document.querySelectorAll("[data-photo-toggle]").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    const box = document.querySelector(btn.dataset.photoToggle);
+    if (!box) return;
+    const hidden = box.classList.toggle("d-none");
+    btn.textContent = hidden ? "Show photos" : "Hide photos";
+  });
+});
 </script>
 {% endblock %}

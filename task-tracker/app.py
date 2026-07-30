@@ -112,6 +112,20 @@ def asset_version(static_dir):
     return h.hexdigest()[:10]
 
 
+def parse_assignee(title, operator_names):
+    """Operator tagged in a published line with '@Name', or None.
+
+    Matches against the real operator display names (the same list the '@'
+    autocomplete offers), longest first so '@Damian Meczykowski' isn't cut short
+    by a '@Damian M' also on the roster. The '@Name' stays in the title: it reads
+    naturally for everyone and keeps the line exactly as the manager wrote it."""
+    low = (title or "").lower()
+    for name in sorted(operator_names or [], key=len, reverse=True):
+        if ("@" + name.lower()) in low:
+            return name
+    return None
+
+
 def now_local():
     return datetime.now(BRUSSELS)
 
@@ -208,6 +222,13 @@ def create_app():
 
     def current_user():
         return session.get("user")
+
+    def active_operators():
+        """Display names of active operators — the '@' autocomplete list and the
+        vocabulary parse_assignee() matches published lines against."""
+        return [u["display_name"] for u in db.query(
+            "SELECT display_name FROM users WHERE role='technician' AND active=1 "
+            "ORDER BY display_name")]
 
     @app.context_processor
     def inject_user():
@@ -317,10 +338,7 @@ def create_app():
             return redirect(url_for("tech_list"))
         ensure_todays_dailies()
         # Operators for the "@" mention autocomplete in the publish box.
-        operators = [u["display_name"] for u in db.query(
-            "SELECT display_name FROM users WHERE role='technician' AND active=1 "
-            "ORDER BY display_name")]
-        return render_template("manager.html", operators=operators)
+        return render_template("manager.html", operators=active_operators())
 
     # ----------------------------------------------------------- operators (admin)
     @app.route("/admin")
@@ -541,6 +559,8 @@ def create_app():
             wd = r["work_date"] if isinstance(r["work_date"], str) else r["work_date"].isoformat()
             prev[(wd, r["col_index"])] = r
         now_iso = now_local().isoformat(timespec="microseconds")
+        today_iso = now_local().date().isoformat()
+        notified = []          # operators whose *upcoming* shifts changed
 
         for i, row in enumerate(cells):
             d = week_isos[i]
@@ -558,7 +578,13 @@ def create_app():
                     changed = (old["shift"] or "") != text or (old["color"] or "") != color
                     keep = old["updated_at"]
                 db.execute(upsert_sql, (d, c + 1, text, color, now_iso if changed else keep))
-        return jsonify({"ok": True})
+                if changed and d >= today_iso and c < len(SCHEDULE_OPERATORS):
+                    name = SCHEDULE_OPERATORS[c]
+                    if name not in notified:
+                        notified.append(name)
+        # Tell the manager who will see a "your shift changed" notice, so saving
+        # isn't a silent act with invisible consequences.
+        return jsonify({"ok": True, "notified": notified})
 
     @app.route("/api/schedule-changes")
     def api_schedule_changes():
@@ -633,7 +659,7 @@ def create_app():
             where += ") "
         rows = db.query(
             "SELECT id, title, status, started_at, completed_at, on_hold, held_seconds, "
-            "is_daily, daily_of "
+            "is_daily, daily_of, assigned_to "
             "FROM tasks " + where + "ORDER BY id DESC",
             params,
         )
@@ -660,7 +686,9 @@ def create_app():
         started = _parse_dtlocal(request.form.get("started_at"))
         finished = _parse_dtlocal(request.form.get("completed_at"))
         if title:
-            db.execute("UPDATE tasks SET title=%s WHERE id=%s", (title, task_id))
+            # Re-read the @-tag from the edited text so assignment tracks the title.
+            db.execute("UPDATE tasks SET title=%s, assigned_to=%s WHERE id=%s",
+                       (title, parse_assignee(title, active_operators()), task_id))
         # A hand-entered time "wins": flag it so later photo uploads won't overwrite it.
         # Clearing a field (None) drops the flag so the photo flow can set it again.
         db.execute(
@@ -922,19 +950,64 @@ def create_app():
                 if r["before_path"] or r["after_path"] or r["progress"]]
         return render_template("photos.html", tasks=rows, d_from=d_from, d_to=d_to)
 
+    @app.route("/photos.zip")
+    @manager_required
+    def photos_zip():
+        """Download the photos for a date range (or one job with ?task=<id>) as a
+        zip, for sending on without saving each image by hand. Files are named
+        job<id>-<type>.jpg so they stay identifiable outside the app."""
+        import io
+        import zipfile
+
+        task_id = request.args.get("task")
+        if task_id and task_id.isdigit():
+            rows = [r for r in fetch_range("1970-01-01", "2999-12-31")
+                    if r["id"] == int(task_id)]
+            label = "job%s" % task_id
+        else:
+            d_from, d_to = parse_range()
+            rows = fetch_range(d_from, d_to)
+            label = d_from if d_from == d_to else "%s_to_%s" % (d_from, d_to)
+
+        buf = io.BytesIO()
+        count = 0
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+            for t in rows:
+                shots = [("before", t["before_path"]), ("after", t["after_path"])]
+                shots += [("progress%d" % (i + 1), p["file_path"])
+                          for i, p in enumerate(t["progress"] or [])]
+                for kind, rel in shots:
+                    if not rel:
+                        continue
+                    abs_path = os.path.join(app.config["UPLOAD_ROOT"],
+                                            rel.replace("/", os.sep))
+                    if not os.path.exists(abs_path):
+                        continue
+                    ext = os.path.splitext(rel)[1] or ".jpg"
+                    z.write(abs_path, "job%d-%s%s" % (t["id"], kind, ext))
+                    count += 1
+        if not count:
+            abort(404)
+        buf.seek(0)
+        return send_file(buf, mimetype="application/zip", as_attachment=True,
+                         download_name="photos-%s.zip" % label)
+
     def ensure_todays_dailies():
         """Create today's instance for each daily template that lacks one. Instances
         are normal tasks titled 'DAILY - <date> - <template>' with daily_of set;
         templates (is_daily=1) are never shown to operators themselves."""
         today = today_local()
         now = now_local().strftime("%Y-%m-%d %H:%M:%S")
-        for tpl in db.query("SELECT id, title FROM tasks WHERE is_daily=1"):
+        for tpl in db.query("SELECT id, title, assigned_to FROM tasks WHERE is_daily=1"):
             has = db.query("SELECT 1 FROM tasks WHERE daily_of=%s AND DATE(created_at)=%s",
                            (tpl["id"], today), one=True)
             if not has:
+                # Instances inherit the template's @-tagged operator.
                 db.execute(
-                    "INSERT INTO tasks (title, created_at, daily_of) VALUES (%s, %s, %s)",
-                    ("DAILY - %s - %s" % (today, tpl["title"]), now, tpl["id"]),
+                    "INSERT INTO tasks (title, created_at, daily_of, assigned_to) "
+                    "VALUES (%s, %s, %s, %s)",
+                    ("DAILY - %s - %s" % (today, tpl["title"]), now, tpl["id"],
+                     tpl["assigned_to"]),
                 )
 
     # --------------------------------------------------------------------- API
@@ -944,23 +1017,26 @@ def create_app():
         Daily templates are hidden; only today's daily instances are shown."""
         ensure_todays_dailies()
         today = today_local()
-        # Order: today's (unfinished) dailies first, then started, then open, then
-        # completed, with on-hold at the very bottom. Works on sqlite and mysql.
-        order_sql = ("CASE WHEN on_hold=1 THEN 4 "
-                     "WHEN daily_of IS NOT NULL AND status <> 'completed' THEN 0 "
-                     "WHEN status='started' THEN 1 "
-                     "WHEN status='open' THEN 2 ELSE 3 END")
+        # Order: on-hold always at the very bottom; then jobs @-tagged for the
+        # operator looking at the list; then today's (unfinished) dailies, started,
+        # open, completed. Works on sqlite and mysql.
+        hold_sql = "CASE WHEN on_hold=1 THEN 1 ELSE 0 END"
+        mine_sql = "CASE WHEN assigned_to IS NOT NULL AND assigned_to=%s THEN 0 ELSE 1 END"
+        status_sql = ("CASE WHEN daily_of IS NOT NULL AND status <> 'completed' THEN 0 "
+                      "WHEN status='started' THEN 1 "
+                      "WHEN status='open' THEN 2 ELSE 3 END")
+        me = (current_user() or {}).get("name") or ""
         rows = db.query(
             f"""
             SELECT id, title, status, is_extra, is_rent, daily_of, client_key, on_hold,
-                   created_at, started_at, completed_at
+                   assigned_to, created_at, started_at, completed_at
             FROM tasks
             WHERE (status <> 'completed' OR DATE(completed_at) = %s)
               AND is_daily = 0
               AND (daily_of IS NULL OR DATE(created_at) = %s)
-            ORDER BY {order_sql}, id DESC
+            ORDER BY {hold_sql}, {mine_sql}, {status_sql}, id DESC
             """,
-            (today, today),
+            (today, today, me),
         )
         for r in rows:
             for k in ("created_at", "started_at", "completed_at"):
@@ -993,18 +1069,21 @@ def create_app():
             return jsonify({"error": "no tasks found"}), 400
 
         created_at = now_local().strftime("%Y-%m-%d %H:%M:%S")
+        operators = active_operators()
         created = []
         for title in titles:
             daily, clean = split_daily_prefix(title)
+            assignee = parse_assignee(title, operators)
             if daily:
                 # A 'DAILY ...' line becomes a hidden recurring template.
                 new_id = db.execute(
-                    "INSERT INTO tasks (title, created_at, is_daily) VALUES (%s, %s, 1)",
-                    (clean, created_at),
+                    "INSERT INTO tasks (title, created_at, is_daily, assigned_to) VALUES (%s, %s, 1, %s)",
+                    (clean, created_at, assignee),
                 )
             else:
                 new_id = db.execute(
-                    "INSERT INTO tasks (title, created_at) VALUES (%s, %s)", (title, created_at)
+                    "INSERT INTO tasks (title, created_at, assigned_to) VALUES (%s, %s, %s)",
+                    (title, created_at, assignee),
                 )
             created.append({"id": new_id, "title": clean if daily else title, "status": "open"})
         ensure_todays_dailies()   # spawn today's instances for any new daily templates

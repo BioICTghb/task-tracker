@@ -50,6 +50,7 @@
         <span class="badge text-bg-{{ 'success' if t.status == 'completed' else 'warning' if t.status == 'started' else 'secondary' }}">#{{ t.id }} · {{ t.status }}</span>
         {% if t.on_hold %}<span class="badge text-bg-dark ms-1">ON HOLD</span>{% endif %}
         {% if t.is_daily %}<span class="badge text-bg-primary ms-1">DAILY</span>{% endif %}
+        {% if t.assigned_to %}<span class="badge text-bg-danger ms-1">@ {{ t.assigned_to }}</span>{% endif %}
       </div>
       <textarea name="title" class="form-control mb-2" rows="2" required>{{ t.title }}</textarea>
       <div class="row g-2 mb-2">

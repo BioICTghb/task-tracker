@@ -39,8 +39,9 @@ hosting is retired. Deploy path on the VM: `/home/sebastien/task-tracker/task-tr
 3. Commit to `main` and push.
 4. **Deploy** on the VM: `cd ~/task-tracker && git pull && sudo systemctl restart tasktracker`.
 5. **Never commit**: `.env`, `dev.db`, `uploads/`, `cloudflared.exe`, logs, backups (gitignored).
-6. Bump the service-worker cache `tt-shell-vN` in `static/service-worker.js` when a static
-   asset (css/js/sw) changes. Bump `APP_VERSION` in `app.py` on a release.
+6. The service-worker cache name is now stamped automatically from a hash of the static
+   files (`asset_version()`), so there is no `tt-shell-vN` to bump. Still bump
+   `APP_VERSION` in `app.py` on a release.
 
 > Note (primary laptop only): historically this repo lives in a OneDrive "Claude Code"
 > folder with a separate live copy at `C:\Users\sebastien.poncelet\TaskTracker` (a
@@ -67,9 +68,20 @@ not affect the live site.
 - **@-mention** (`manager.html` publish box): typing `@` opens an operator autocomplete
   anchored at the caret (a hidden mirror `div` computes the `@`'s pixel position — textareas
   expose no caret coords). Filters as you type; ↑/↓ navigate, Tab/Enter or click select,
-  Esc/click-outside close. The list is fed by `index` passing active `technician` display
-  names as `operators` → `{{ operators|tojson }}`. It's a typing aid only — the `@name` is
-  plain text in the task line, not a DB link.
+  Esc/click-outside close. The list is fed by `active_operators()`.
+- **Assignment**: `parse_assignee()` reads `@Name` from a published (or edited) line against
+  the active operator names, longest match first, into `tasks.assigned_to`. The `@Name` stays
+  in the title on purpose. `/api/tasks` sorts on-hold last, then the viewer's own jobs, then
+  the status order; their jobs get a "FOR YOU" badge + red edge (`.task-mine`). Daily
+  instances inherit the template's assignee.
+- **Shift-change warning**: `schedule_cells.updated_at` advances only on a real change
+  (text or color), `users.schedule_seen_at` records acknowledgement;
+  `/api/schedule-changes` → sticky banner on the operator list, cleared by
+  `/api/schedule-ack`. First view baselines silently. Saving the grid returns `notified`
+  so the manager sees who was flagged.
+- **Asset version**: `asset_version()` hashes static css/js; it stamps the SW cache name
+  (`tt-shell-<hash>`, no manual `vN` bump) and `?v=` on the css/js links. The SW `SHELL`
+  entries carry the same `?v=` so precached URLs match what pages request.
 
 ## Hosting / tunnel
 Tunnel `tasktracker` (id `59f22012-df09-427d-9598-10c75ac735e5`) → `127.0.0.1:5000`.

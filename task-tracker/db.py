@@ -88,6 +88,9 @@ def _sqlite_init_schema(conn):
         "ALTER TABLE tasks ADD COLUMN is_daily INTEGER NOT NULL DEFAULT 0",
         "ALTER TABLE tasks ADD COLUMN daily_of INTEGER",
         "ALTER TABLE schedule_cells ADD COLUMN color TEXT NOT NULL DEFAULT ''",
+        # Operator a job was tagged for with "@Name" in the published line, so
+        # their own jobs sort first and stand out in their list.
+        "ALTER TABLE tasks ADD COLUMN assigned_to TEXT",
         # When a cell's shift/color last actually changed, so operators can be
         # warned about swaps to their own upcoming shifts (see /api/schedule-changes).
         "ALTER TABLE schedule_cells ADD COLUMN updated_at TEXT",

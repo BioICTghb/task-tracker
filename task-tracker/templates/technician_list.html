@@ -79,8 +79,20 @@ function kindTag(t) {
   return "";
 }
 
+const MY_NAME = {{ current_user.name|tojson }};
+
+// Jobs the manager @-tagged for this operator: called out with a "FOR YOU" badge
+// and a highlighted edge (the API already sorts them to the top). Jobs tagged for
+// someone else name that person, so the floor can see at a glance whose it is.
+function assignTag(t) {
+  if (!t.assigned_to) return "";
+  if (t.assigned_to === MY_NAME) return ' <span class="badge text-bg-danger">FOR YOU</span>';
+  return ` <span class="badge text-bg-light border text-muted">${esc(t.assigned_to)}</span>`;
+}
+
 function serverCard(t) {
-  const tag = kindTag(t);
+  const tag = kindTag(t) + assignTag(t);
+  const mine = t.assigned_to && t.assigned_to === MY_NAME ? " task-mine" : "";
   // On-hold tasks are not workable: non-clickable, greyed-out card (no link).
   if (t.on_hold) {
     return `<div class="task-card card on-hold">
@@ -89,7 +101,7 @@ function serverCard(t) {
         <span class="badge text-bg-dark">ON HOLD</span>
       </div></div>`;
   }
-  return `<a href="/tech/task/${t.id}" class="task-card card text-decoration-none">
+  return `<a href="/tech/task/${t.id}" class="task-card card text-decoration-none${mine}">
       <div class="card-body d-flex justify-content-between align-items-center">
         <span class="task-title">${esc(t.title)}${tag}</span>
         ${badge(t.status)}

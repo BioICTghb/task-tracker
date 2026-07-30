@@ -23,6 +23,7 @@
     </div>
     <button class="btn btn-primary">View</button>
     <a class="btn btn-outline-secondary" href="/report?from={{ d_from }}&to={{ d_to }}">Report</a>
+    {% if tasks %}<a class="btn btn-outline-secondary" href="/photos.zip?from={{ d_from }}&to={{ d_to }}">Download ZIP</a>{% endif %}
     <button type="button" class="btn btn-outline-secondary" onclick="window.print()">Print / PDF</button>
   </form>
 </div>

@@ -2,7 +2,9 @@
 
 A minimal, offline-first task tracking PWA. Replaces a WhatsApp task list.
 
-- **Managers** paste a list of tasks and click *Publish*. Type **`@`** in the paste box to tag an operator — an autocomplete list of active operators appears at the cursor, filters as you type, and is picked with the arrow keys + Tab/Enter or a click.
+- **Managers** paste a list of tasks and click *Publish*. Type **`@`** in the paste box to assign an operator — an autocomplete list appears at the cursor, filters as you type, and is picked with the arrow keys + Tab/Enter or a click. Assigned jobs sort first for that operator and are flagged **FOR YOU**.
+- **Shift swaps are flagged**: a change to an operator's upcoming shift raises a warning on their task list that stays until they acknowledge it.
+- **Reports/photos** can be shown inline, printed, or downloaded as a ZIP (whole day or a single job).
 - **Technicians** open a task, take a **before** photo and an **after** photo. Nothing else to type.
 - Works **fully offline** — photos and timestamps are stored on the phone and sync automatically when the network returns.
 

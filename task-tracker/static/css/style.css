@@ -15,6 +15,9 @@
 
 .task-card { transition: transform .05s; }
 .task-card:active { transform: scale(0.99); }
+/* Jobs @-tagged for the operator looking at the list: a red edge so their own
+   work stands out from the shared list at a glance. */
+.task-card.task-mine { border-left: 6px solid #dc3545; }
 /* Parked tasks: greyed out so operators can see they're paused, not active. */
 .task-card.on-hold { opacity: .6; background-color: #f2f2f2; cursor: not-allowed; }
 .task-card.on-hold .task-title { color: #6c757d; }
