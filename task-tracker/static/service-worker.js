@@ -12,17 +12,22 @@
  * page has been closed, so queued photos upload as soon as the OS grants
  * connectivity.
  */
-const CACHE = "tt-shell-v20";
+// Cache name is stamped by the server from a hash of the static files (see
+// asset_version() in app.py), so editing any css/js automatically retires the
+// old cache — no manual version bump to forget.
+const CACHE = "tt-shell-__ASSET_VERSION__";
 const SHELL = [
   "/",
   "/tech",
   "/tech/extra",
   "/manifest.json",
-  "/static/css/style.css",
-  "/static/js/db.js",
-  "/static/js/photo.js",
-  "/static/js/sync.js",
-  "/static/js/app.js",
+  // Versioned to match exactly what the pages request (base.html appends the
+  // same ?v=), so the precached copy is the one served offline.
+  "/static/css/style.css?v=__ASSET_VERSION__",
+  "/static/js/db.js?v=__ASSET_VERSION__",
+  "/static/js/photo.js?v=__ASSET_VERSION__",
+  "/static/js/sync.js?v=__ASSET_VERSION__",
+  "/static/js/app.js?v=__ASSET_VERSION__",
   "/static/icons/icon-192.svg",
   "/static/icons/icon-512.svg",
   "https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css",

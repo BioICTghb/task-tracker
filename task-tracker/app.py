@@ -89,6 +89,29 @@ def schedule_shift_label(hex_color):
     return best_label
 
 
+def asset_version(static_dir):
+    """Short hash of the static css/js (name + size + mtime), used to stamp the
+    service-worker cache name and to cache-bust <link>/<script> URLs. Computed
+    once per process, so a deploy (which restarts the service) picks up changes
+    automatically instead of relying on a hand-edited version number."""
+    import hashlib
+    h = hashlib.sha1()
+    for sub in ("css", "js"):
+        d = os.path.join(static_dir, sub)
+        for name in sorted(os.listdir(d)) if os.path.isdir(d) else []:
+            p = os.path.join(d, name)
+            try:
+                st = os.stat(p)
+            except OSError:
+                continue
+            h.update(("%s:%d:%d;" % (name, st.st_size, int(st.st_mtime))).encode())
+    sw = os.path.join(static_dir, "service-worker.js")
+    if os.path.exists(sw):
+        st = os.stat(sw)
+        h.update(("sw:%d:%d;" % (st.st_size, int(st.st_mtime))).encode())
+    return h.hexdigest()[:10]
+
+
 def now_local():
     return datetime.now(BRUSSELS)
 
@@ -148,10 +171,14 @@ def create_app():
     # Make sure the upload root exists
     os.makedirs(app.config["UPLOAD_ROOT"], exist_ok=True)
 
+    # Hash of the static assets, used for cache-busting and the SW cache name.
+    ASSET_VERSION = asset_version(os.path.join(app.root_path, "static"))
+
     # Expose the version (and author) to every template.
     @app.context_processor
     def inject_app_meta():
-        return {"app_version": APP_VERSION, "app_author": "Sébastien Poncelet"}
+        return {"app_version": APP_VERSION, "app_author": "Sébastien Poncelet",
+                "asset_v": ASSET_VERSION}
 
     # --------------------------------------------------------------- auth setup
     app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(days=30)
@@ -594,6 +621,16 @@ def create_app():
             # day has passed (only today's remain) so they don't accumulate.
             where = "WHERE is_daily=0 AND (daily_of IS NULL OR DATE(created_at)=%s) "
             params = (today_local(),)
+        # Search box: match the description, or an exact task id when digits are
+        # typed (so "421" finds #421). Ignores the daily-instance date prefix.
+        q = (request.args.get("q") or "").strip()
+        if q:
+            where += "AND (title LIKE %s"
+            params = params + ("%" + q + "%",)
+            if q.isdigit():
+                where += " OR id=%s"
+                params = params + (int(q),)
+            where += ") "
         rows = db.query(
             "SELECT id, title, status, started_at, completed_at, on_hold, held_seconds, "
             "is_daily, daily_of "
@@ -607,7 +644,7 @@ def create_app():
                 r[k + "_local"] = (v.strftime("%Y-%m-%dT%H:%M:%S") if hasattr(v, "strftime")
                                    else str(v)[:19].replace(" ", "T")) if v else ""
         return render_template("edit_tasks.html", tasks=rows,
-                               saved=request.args.get("saved"), flt=flt)
+                               saved=request.args.get("saved"), flt=flt, q=q)
 
     def _parse_dtlocal(v):
         """'2026-06-30T08:00' or '...:00' from a datetime-local field -> DB string / None."""
@@ -639,7 +676,9 @@ def create_app():
             db.execute("UPDATE task_photos SET timestamp=%s WHERE task_id=%s AND photo_type='after'",
                        (finished, task_id))
         return redirect(url_for("manage_tasks", saved=task_id,
-                                filter=request.form.get("filter") or None))
+                                filter=request.form.get("filter") or None,
+                                q=request.form.get("q") or None,
+                                _anchor="task-%d" % task_id))
 
     @app.route("/manage/tasks/<int:task_id>/hold", methods=["POST"])
     @manager_required
@@ -669,7 +708,9 @@ def create_app():
                 (now_local().strftime("%Y-%m-%d %H:%M:%S"), task_id),
             )
         return redirect(url_for("manage_tasks", saved=task_id,
-                                filter=request.form.get("filter") or None))
+                                filter=request.form.get("filter") or None,
+                                q=request.form.get("q") or None,
+                                _anchor="task-%d" % task_id))
 
     @app.route("/manage/tasks/<int:task_id>/delete", methods=["POST"])
     @manager_required
@@ -684,7 +725,8 @@ def create_app():
                 pass  # leave orphan file rather than fail the delete
         db.execute("DELETE FROM task_photos WHERE task_id=%s", (task_id,))
         db.execute("DELETE FROM tasks WHERE id=%s", (task_id,))
-        return redirect(url_for("manage_tasks", filter=request.form.get("filter") or None))
+        return redirect(url_for("manage_tasks", filter=request.form.get("filter") or None,
+                                q=request.form.get("q") or None))
 
     @app.route("/manage/tasks/<int:task_id>/daily", methods=["POST"])
     @manager_required
@@ -1120,7 +1162,11 @@ def create_app():
 
     @app.route("/service-worker.js")
     def service_worker():
-        resp = send_from_directory(static_dir, "service-worker.js")
+        # Served rendered (not as a static file) so the cache name carries the
+        # asset hash: any css/js edit retires the old shell cache by itself.
+        with open(os.path.join(static_dir, "service-worker.js"), encoding="utf-8") as f:
+            js = f.read().replace("__ASSET_VERSION__", ASSET_VERSION)
+        resp = app.response_class(js, mimetype="application/javascript")
         resp.headers["Service-Worker-Allowed"] = "/"
         resp.headers["Cache-Control"] = "no-cache"
         return resp

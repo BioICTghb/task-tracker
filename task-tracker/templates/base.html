@@ -19,7 +19,7 @@
   <link rel="icon" href="{{ url_for('static', filename='icons/icon-192.svg') }}">
 
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
-  <link href="{{ url_for('static', filename='css/style.css') }}" rel="stylesheet">
+  <link href="{{ url_for('static', filename='css/style.css') }}?v={{ asset_v }}" rel="stylesheet">
 
   <!-- Apply the saved theme before first paint, so there's no light-mode flash. -->
   <script>
@@ -72,10 +72,10 @@
     </div>
   </div>
 
-  <script src="{{ url_for('static', filename='js/db.js') }}"></script>
-  <script src="{{ url_for('static', filename='js/photo.js') }}"></script>
-  <script src="{{ url_for('static', filename='js/sync.js') }}"></script>
-  <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+  <script src="{{ url_for('static', filename='js/db.js') }}?v={{ asset_v }}"></script>
+  <script src="{{ url_for('static', filename='js/photo.js') }}?v={{ asset_v }}"></script>
+  <script src="{{ url_for('static', filename='js/sync.js') }}?v={{ asset_v }}"></script>
+  <script src="{{ url_for('static', filename='js/app.js') }}?v={{ asset_v }}"></script>
 
   <!-- Dark/light toggle wiring — kept outside page_script so it always runs,
        even on pages that override page_script entirely. -->

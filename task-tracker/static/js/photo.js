@@ -51,12 +51,27 @@
     });
   }
 
+  // Does this device have a camera worth offering? Phones/tablets do; a desktop
+  // or laptop can realistically only upload an existing file, so asking
+  // "take photo or from gallery?" there is a dead end. Feature-detected (touch +
+  // coarse pointer) rather than sniffing the user agent; a touchscreen laptop
+  // driven by a mouse reports a fine pointer and is treated as a desktop.
+  function hasCamera() {
+    return (navigator.maxTouchPoints || 0) > 0 &&
+           window.matchMedia("(pointer: coarse)").matches;
+  }
+
   // Ask the operator: take a new photo (camera) or pick an existing one
   // (gallery). We set/clear `capture` ourselves so both options work reliably
   // on Android and iOS, then trigger the given hidden <input type=file>.
+  // On desktop we skip the prompt and open the file picker directly.
   function choose(inputEl) {
     const ov = document.getElementById("photo-source");
-    if (!ov) { inputEl.click(); return; }   // fallback if markup missing
+    if (!ov || !hasCamera()) {              // desktop (or markup missing)
+      inputEl.removeAttribute("capture");
+      inputEl.click();
+      return;
+    }
     const onPick = (e) => {
       const btn = e.target.closest("[data-src]");
       if (!btn) return;
