@@ -38,7 +38,7 @@ except Exception:  # HEIC support optional; JPEG/PNG still handled
 BRUSSELS = ZoneInfo("Europe/Brussels")
 
 # App version — bump this on each release. Shown in the footer of every page.
-APP_VERSION = "1.3.0"
+APP_VERSION = "1.4.0"
 
 # Operators who live on site and log rent hours — only they see the Rent button.
 RENT_USERNAMES = {"taras_d", "ivan_d", "sebastian_r", "tomasz_m", "sebastien_p"}
@@ -497,20 +497,85 @@ def create_app():
             return jsonify({"error": "invalid cells"}), 400
 
         upsert_sql = (
-            """INSERT INTO schedule_cells (work_date, col_index, shift, color) VALUES (%s, %s, %s, %s)
-               ON CONFLICT(work_date, col_index) DO UPDATE SET shift=excluded.shift, color=excluded.color"""
+            """INSERT INTO schedule_cells (work_date, col_index, shift, color, updated_at) VALUES (%s, %s, %s, %s, %s)
+               ON CONFLICT(work_date, col_index) DO UPDATE SET shift=excluded.shift, color=excluded.color, updated_at=excluded.updated_at"""
             if db.IS_SQLITE else
-            """INSERT INTO schedule_cells (work_date, col_index, shift, color) VALUES (%s, %s, %s, %s)
-               ON DUPLICATE KEY UPDATE shift=VALUES(shift), color=VALUES(color)"""
+            """INSERT INTO schedule_cells (work_date, col_index, shift, color, updated_at) VALUES (%s, %s, %s, %s, %s)
+               ON DUPLICATE KEY UPDATE shift=VALUES(shift), color=VALUES(color), updated_at=VALUES(updated_at)"""
         )
+        # Existing values for this week, so updated_at only advances on a *real*
+        # change (the client re-saves the whole grid; we must not flag no-ops).
+        week_isos = [(monday + timedelta(days=i)).isoformat() for i in range(SCHEDULE_ROWS)]
+        ph = ",".join(["%s"] * len(week_isos))
+        prev = {}
+        for r in db.query(
+            f"SELECT work_date, col_index, shift, color, updated_at FROM schedule_cells "
+            f"WHERE work_date IN ({ph})", tuple(week_isos)):
+            wd = r["work_date"] if isinstance(r["work_date"], str) else r["work_date"].isoformat()
+            prev[(wd, r["col_index"])] = r
+        now_iso = now_local().isoformat(timespec="microseconds")
+
         for i, row in enumerate(cells):
-            d = (monday + timedelta(days=i)).isoformat()
+            d = week_isos[i]
             for c, cell in enumerate(row):
                 cell = cell if isinstance(cell, dict) else {"text": cell, "color": ""}
                 text = (cell.get("text") or "").strip()[:64]
                 color = (cell.get("color") or "").strip()
                 color = color if _HEX_COLOR_RE.match(color) else ""
-                db.execute(upsert_sql, (d, c + 1, text, color))
+                old = prev.get((d, c + 1))
+                if old is None:
+                    # New cell only counts as a change if it actually has a shift.
+                    changed = text != ""
+                    keep = None
+                else:
+                    changed = (old["shift"] or "") != text or (old["color"] or "") != color
+                    keep = old["updated_at"]
+                db.execute(upsert_sql, (d, c + 1, text, color, now_iso if changed else keep))
+        return jsonify({"ok": True})
+
+    @app.route("/api/schedule-changes")
+    def api_schedule_changes():
+        """Upcoming shifts for the logged-in operator that changed since they last
+        acknowledged their schedule. Drives the "your schedule changed" banner on
+        the task list. First-ever view silently baselines (no alarm about the
+        schedule that already existed)."""
+        user = current_user() or {}
+        uid = user.get("id")
+        col = _operator_col_for(user.get("name"))
+        if not uid or not col:
+            return jsonify({"changes": [], "count": 0})
+        row = db.query("SELECT schedule_seen_at FROM users WHERE id=%s", (uid,), one=True)
+        seen_at = row["schedule_seen_at"] if row else None
+        if not seen_at:
+            db.execute("UPDATE users SET schedule_seen_at=%s WHERE id=%s",
+                       (now_local().isoformat(timespec="microseconds"), uid))
+            return jsonify({"changes": [], "count": 0})
+        # Only shifts from today forward matter (a past swap can't be worked).
+        today = now_local().date()
+        horizon = today + timedelta(days=14)
+        rows = db.query(
+            "SELECT work_date, shift FROM schedule_cells "
+            "WHERE col_index=%s AND updated_at IS NOT NULL AND updated_at > %s "
+            "AND work_date >= %s AND work_date < %s ORDER BY work_date",
+            (col, seen_at, today.isoformat(), horizon.isoformat()),
+        )
+        changes = []
+        for r in rows:
+            wd = r["work_date"] if isinstance(r["work_date"], str) else r["work_date"].isoformat()
+            label = datetime.strptime(wd, "%Y-%m-%d").date().strftime("%a %d %b")
+            shift = (r["shift"] or "").strip()
+            changes.append({"date": wd, "label": label, "shift": shift or "— (no longer on shift)"})
+        return jsonify({"changes": changes, "count": len(changes)})
+
+    @app.route("/api/schedule-ack", methods=["POST"])
+    def api_schedule_ack():
+        """Operator confirms they've seen their (changed) schedule — clears the banner."""
+        user = current_user() or {}
+        uid = user.get("id")
+        if not uid:
+            return jsonify({"ok": False}), 403
+        db.execute("UPDATE users SET schedule_seen_at=%s WHERE id=%s",
+                   (now_local().isoformat(timespec="microseconds"), uid))
         return jsonify({"ok": True})
 
     # ------------------------------------------------ edit task descriptions (manager)

@@ -88,6 +88,12 @@ def _sqlite_init_schema(conn):
         "ALTER TABLE tasks ADD COLUMN is_daily INTEGER NOT NULL DEFAULT 0",
         "ALTER TABLE tasks ADD COLUMN daily_of INTEGER",
         "ALTER TABLE schedule_cells ADD COLUMN color TEXT NOT NULL DEFAULT ''",
+        # When a cell's shift/color last actually changed, so operators can be
+        # warned about swaps to their own upcoming shifts (see /api/schedule-changes).
+        "ALTER TABLE schedule_cells ADD COLUMN updated_at TEXT",
+        # Last time an operator acknowledged seeing their schedule. Changes with
+        # updated_at newer than this raise the "your schedule changed" banner.
+        "ALTER TABLE users ADD COLUMN schedule_seen_at TEXT",
     ):
         try:
             conn.execute(ddl)

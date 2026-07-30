@@ -2,6 +2,12 @@
 {% block title %}My Tasks{% endblock %}
 
 {% block content %}
+<div id="sched-alert" class="alert alert-danger shadow-sm mb-3 d-none">
+  <div class="fw-bold mb-1">&#9888; Your shift changed</div>
+  <div id="sched-alert-body" class="mb-2"></div>
+  <button id="sched-ack" class="btn btn-light btn-sm fw-semibold w-100">OK, I've seen it</button>
+</div>
+
 <div class="dashboard-greeting d-flex justify-content-between align-items-center mb-3">
   <div>
     <div class="h4 mb-0">Hi, {{ current_user.name.split(' ')[0] }}</div>
@@ -185,6 +191,29 @@ async function loadMySchedule() {
     }).join("");
   } catch (e) { /* offline or not on the roster — just skip the widget */ }
 }
+// Shift-swap warning: shifts of theirs that changed since they last confirmed.
+// Stays up until acknowledged, so a silent swap can't be missed.
+async function loadScheduleChanges() {
+  try {
+    const res = await fetch("/api/schedule-changes");
+    if (!res.ok) return;
+    const data = await res.json();
+    const box = document.getElementById("sched-alert");
+    if (!data.count) { box.classList.add("d-none"); return; }
+    document.getElementById("sched-alert-body").innerHTML = data.changes
+      .map((c) => `<div><strong>${esc(c.label)}</strong> &rarr; ${esc(c.shift)}</div>`).join("");
+    box.classList.remove("d-none");
+  } catch (e) { /* offline — try again on the next poll */ }
+}
+document.getElementById("sched-ack").addEventListener("click", async () => {
+  try {
+    await fetch("/api/schedule-ack", { method: "POST" });
+    document.getElementById("sched-alert").classList.add("d-none");
+    loadMySchedule();   // reflect the new shifts in the widget
+  } catch (e) { /* still offline: banner stays, which is the safe outcome */ }
+});
+loadScheduleChanges();
+
 document.getElementById("week-prev").addEventListener("click", () => { scheduleOffset -= 1; loadMySchedule(); });
 document.getElementById("week-next").addEventListener("click", () => { scheduleOffset += 1; loadMySchedule(); });
 document.getElementById("week-today").addEventListener("click", () => { scheduleOffset = 0; loadMySchedule(); });
@@ -196,6 +225,7 @@ loadMySchedule();
 function pollIfActive() {
   if (document.visibilityState === "visible" && navigator.onLine) {
     refreshFromNetwork().catch(() => {});
+    loadScheduleChanges();      // surface a shift swap without a reload
   }
 }
 setInterval(pollIfActive, 20000);
