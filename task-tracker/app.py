@@ -289,7 +289,11 @@ def create_app():
         if current_user().get("role") == "technician":
             return redirect(url_for("tech_list"))
         ensure_todays_dailies()
-        return render_template("manager.html")
+        # Operators for the "@" mention autocomplete in the publish box.
+        operators = [u["display_name"] for u in db.query(
+            "SELECT display_name FROM users WHERE role='technician' AND active=1 "
+            "ORDER BY display_name")]
+        return render_template("manager.html", operators=operators)
 
     # ----------------------------------------------------------- operators (admin)
     @app.route("/admin")
