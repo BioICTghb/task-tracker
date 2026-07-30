@@ -64,6 +64,12 @@ not affect the live site.
   are operator-created jobs. **On-hold** hides/blocks tasks for operators. **Report** is
   keyed on completion date, has an in-progress page with photo cards, and a status pie.
 - Roles: `manager` + `developer` are manager-level (`MANAGER_ROLES`); `technician` = operator.
+- **@-mention** (`manager.html` publish box): typing `@` opens an operator autocomplete
+  anchored at the caret (a hidden mirror `div` computes the `@`'s pixel position — textareas
+  expose no caret coords). Filters as you type; ↑/↓ navigate, Tab/Enter or click select,
+  Esc/click-outside close. The list is fed by `index` passing active `technician` display
+  names as `operators` → `{{ operators|tojson }}`. It's a typing aid only — the `@name` is
+  plain text in the task line, not a DB link.
 
 ## Hosting / tunnel
 Tunnel `tasktracker` (id `59f22012-df09-427d-9598-10c75ac735e5`) → `127.0.0.1:5000`.

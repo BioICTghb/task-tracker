@@ -77,10 +77,50 @@ const OPERATORS = {{ operators|tojson }};
     list.hidden = false;
   }
 
-  // Anchor the dropdown just under the textarea, aligned to its left.
+  // Pixel position of the '@' that opened this mention, using a hidden mirror
+  // div that replicates the textarea's box + text wrapping (textareas expose no
+  // caret coordinates natively).
+  function atCoords(atIndex) {
+    const cs = getComputedStyle(ta);
+    const mirror = document.createElement("div");
+    [
+      "boxSizing", "width", "paddingTop", "paddingRight", "paddingBottom",
+      "paddingLeft", "borderTopWidth", "borderRightWidth", "borderBottomWidth",
+      "borderLeftWidth", "fontFamily", "fontSize", "fontWeight", "fontStyle",
+      "fontVariant", "letterSpacing", "lineHeight", "textTransform",
+      "wordSpacing", "textIndent", "tabSize",
+    ].forEach((p) => { mirror.style[p] = cs[p]; });
+    mirror.style.position = "absolute";
+    mirror.style.visibility = "hidden";
+    mirror.style.whiteSpace = "pre-wrap";
+    mirror.style.overflowWrap = "break-word";
+    mirror.style.top = ta.offsetTop + "px";
+    mirror.style.left = ta.offsetLeft + "px";
+    mirror.textContent = ta.value.slice(0, atIndex);
+    const marker = document.createElement("span");
+    marker.textContent = "@";
+    mirror.appendChild(marker);
+    wrap.appendChild(mirror);
+    const top = marker.offsetTop;
+    const left = marker.offsetLeft;
+    wrap.removeChild(mirror);
+    return { top, left };
+  }
+
+  // Anchor the dropdown right under the '@', following the caret.
   function positionList() {
-    list.style.top = ta.offsetTop + ta.offsetHeight + 2 + "px";
-    list.style.left = ta.offsetLeft + "px";
+    const men = currentMention();
+    if (!men) return;
+    const cs = getComputedStyle(ta);
+    const lh = parseFloat(cs.lineHeight) || 20;
+    const c = atCoords(men.atIndex);
+    let top = ta.offsetTop + c.top - ta.scrollTop + lh + 2;
+    let left = ta.offsetLeft + c.left;
+    // Keep the list inside the textarea's width.
+    const maxLeft = Math.max(ta.offsetLeft, ta.offsetLeft + ta.offsetWidth - 230);
+    if (left > maxLeft) left = maxLeft;
+    list.style.top = top + "px";
+    list.style.left = left + "px";
   }
 
   function setActive(i) {

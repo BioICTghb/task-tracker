@@ -8,7 +8,7 @@ A minimal, **offline-first** task tracking web app (PWA) for an industrial envir
 
 ## What it does
 
-- **Managers** paste a task list (one line = one task) and publish it.
+- **Managers** paste a task list (one line = one task) and publish it. Typing **`@`** in the paste box opens an operator autocomplete (at the cursor, filter-as-you-type, keyboard- or mouse-selectable) to tag who a job is for.
 - **Technicians** open a job and take a **before** photo, optional **progress** photos (up to 4), and an **after** photo. No typing required.
 - **Unplanned "extra" jobs** can be created on the spot (works fully offline).
 - **Logins & roles** — managers publish/report and manage operators; technicians complete their task list. Every job records who started and finished it.
