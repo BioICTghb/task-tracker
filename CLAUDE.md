@@ -85,8 +85,10 @@ not affect the live site.
 - **Shift-change warning**: `schedule_cells.updated_at` advances only on a real change
   (text or color), `users.schedule_seen_at` records acknowledgement;
   `/api/schedule-changes` → sticky banner on the operator list, cleared by
-  `/api/schedule-ack`. First view baselines silently. Saving the grid returns `notified`
-  so the manager sees who was flagged.
+  `/api/schedule-ack`. Saving the grid returns `notified` so the manager sees who was
+  flagged. `schedule_seen_at` is baselined **when the account is created** (plus a
+  startup backfill for existing rows) — do not go back to baselining on first view:
+  an operator who hadn't opened the app yet then had their first real change swallowed.
 - **Asset version**: `asset_version()` hashes static css/js; it stamps the SW cache name
   (`tt-shell-<hash>`, no manual `vN` bump) and `?v=` on the css/js links. The SW `SHELL`
   entries carry the same `?v=` so precached URLs match what pages request.

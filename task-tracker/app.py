@@ -237,7 +237,19 @@ def create_app():
                     "- change this in the Operators page after first login."
                 )
 
+    def baseline_schedule_seen():
+        """Give every account a schedule_seen_at, so a shift change is never
+        swallowed. Without this an operator who hasn't opened the app yet has a
+        NULL marker, and their first view would baseline *after* the change --
+        silently losing the very notice the manager was told had been sent. Runs
+        once (only NULL rows), so on deploy everyone counts as up to date now and
+        only later changes raise the banner."""
+        with app.app_context():
+            db.execute("UPDATE users SET schedule_seen_at=%s WHERE schedule_seen_at IS NULL",
+                       (now_local().isoformat(timespec="microseconds"),))
+
     ensure_seed_manager()
+    baseline_schedule_seen()
 
     PUBLIC_ENDPOINTS = {"login", "static", "service_worker", "manifest", "healthz"}
 
@@ -383,8 +395,12 @@ def create_app():
         if db.query("SELECT id FROM users WHERE username=%s", (username,), one=True):
             return redirect(url_for("admin", msg="That login already exists."))
         db.execute(
-            "INSERT INTO users (username, password_hash, display_name, role) VALUES (%s, %s, %s, %s)",
-            (username, generate_password_hash(password), display_name, role),
+            "INSERT INTO users (username, password_hash, display_name, role, schedule_seen_at) "
+            "VALUES (%s, %s, %s, %s, %s)",
+            (username, generate_password_hash(password), display_name, role,
+             # Baselined at creation, so a shift change made before this operator
+             # first opens the app still raises their banner.
+             now_local().isoformat(timespec="microseconds")),
         )
         return redirect(url_for("admin", msg=f"Added {display_name}."))
 
