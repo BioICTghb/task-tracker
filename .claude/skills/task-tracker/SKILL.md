@@ -11,27 +11,37 @@ description: >-
 
 # Task Tracker — operating manual
 
-Offline-first Flask PWA (MySQL prod / **SQLite in use**, PWA service worker, IndexedDB
-offline queue). Public URL **https://biopower-tasks.org** via a Cloudflare tunnel.
+Offline-first Flask PWA (SQLite, PWA service worker, IndexedDB offline queue). Public URL
+**https://biopower-tasks.org**. **Production runs on a dedicated Ubuntu VM** (Proxmox, user
+`sebastien`, app + tunnel as systemd services) — the laptop is retired (migrated 2026-07).
 
 ## Where things live (read this first)
 
 | What | Path |
 |---|---|
-| **Live app + data** (edit & run here) | `C:\Users\sebastien.poncelet\TaskTracker` |
-| Local venv python | `C:\Users\sebastien.poncelet\TaskTracker\.venv\Scripts\python.exe` |
+| **Production app + LIVE data** | VM `/home/sebastien/task-tracker/task-tracker` (`dev.db`, `uploads/`) |
+| Local dev copy (edit code here) | `C:\Users\sebastien.poncelet\TaskTracker` |
+| Local venv python (for tests) | `C:\Users\sebastien.poncelet\TaskTracker\.venv\Scripts\python.exe` |
 | Git repo (commit from here) | `C:\Users\sebastien.poncelet\OneDrive - Biopower NV\Bureaublad\Claude Code` |
 | App files inside the repo | `<repo>\task-tracker\...` |
 | GitHub remote | `https://github.com/BioICTghb/task-tracker.git` (branch `main`) |
-| Cloudflared config | `C:\Users\sebastien.poncelet\.cloudflared\` |
 
-**Golden rule:** always work from the **local `TaskTracker`** folder (code + `dev.db` +
-`uploads`), NOT the OneDrive copy — OneDrive file-locking caused past outages. The repo
-lives in the OneDrive "Claude Code" folder; you commit by copying changed files into it.
+**Golden rules:**
+- **Edit code** in the local `TaskTracker` folder (never the OneDrive copy — file-locking).
+  Commit by copying changed files into the OneDrive repo, then push.
+- **Deploy** = on the VM: `cd ~/task-tracker && git pull && sudo systemctl restart tasktracker`.
+- **LIVE DATA is on the VM.** The laptop's `dev.db`/`uploads` are a stale snapshot. Data
+  edits (delete/reopen tasks, fix photos) must run on the VM (SSH, or the app's in-UI
+  Delete button) — editing the laptop's local `dev.db` no longer affects the live site.
 
 ## Running data / DB operations
 
-Use the local venv python with the app's Config so paths resolve to the live data:
+> The recipe below runs against the **local dev copy** (for tests). For **live** edits,
+> run the equivalent on the **VM** (`/home/sebastien/task-tracker/task-tracker`, via SSH,
+> using `.venv/bin/python` + `Config`), or use the app's in-UI Delete button. Editing the
+> laptop's local `dev.db` no longer changes the live site.
+
+Use the venv python with the app's Config so paths resolve to that instance's data:
 
 ```bash
 cd "/c/Users/sebastien.poncelet/TaskTracker" && ./.venv/Scripts/python.exe -c "
@@ -121,24 +131,22 @@ git -C "$REPO" push origin main
 - Data edits (deletes, reopens) are NOT committed — they're live-DB changes only.
 - **Restart the app** to load code/template changes (the user runs it themselves).
 
-## Cloudflare tunnel / hosting
+## Cloudflare tunnel / hosting (on the VM)
 
 - Tunnel `tasktracker` (id `59f22012-df09-427d-9598-10c75ac735e5`) → `127.0.0.1:5000`.
-  DNS `biopower-tasks.org` already points to it.
+  DNS `biopower-tasks.org` points to it.
 - **Symptoms**: `1033`/`530` = tunnel (cloudflared) down; **`502`/bad gateway** = tunnel up
-  but the app on 5000 is down/starved. `https://biopower-tasks.org/healthz` should be `{"ok":true}`.
-- On the laptop, cloudflared self-heals via a Task Scheduler job **`CloudflareTunnelWatchdog`**
-  (single-shot check every 3 min → starts it if down; `~/.cloudflared/run-watchdog.vbs`).
-  Force it now: `wscript "$env:USERPROFILE\.cloudflared\run-watchdog.vbs"`.
-- The **app has no watchdog** on the laptop — if it dies (e.g. weekend memory starvation
-  from vmmem/CodeMeter/SQL Server on the 16 GB machine) it stays down until restarted.
+  but the app on 5000 is down. Health: `https://biopower-tasks.org/healthz` = `{"ok":true}`.
+- Both app + tunnel are **systemd services** on the VM (`tasktracker`, `cloudflared`) —
+  auto-restart on crash and start on boot, no watchdog hacks. Check with
+  `systemctl status tasktracker cloudflared` and `journalctl -u tasktracker -n 50`.
 
-## Deployment (the real fix for the laptop woes)
+## Deployment (done — running on the VM)
 
-Move hosting to a dedicated Ubuntu VM (systemd services for app + tunnel, no memory
-contention, proper auto-restart). Full runbook: **`task-tracker/deploy/MIGRATION.md`**
-(also `deploy/DEPLOY.md`, `deploy/tasktracker.service`, `deploy/cloudflared-config.yml`).
-On Linux the app runs under **gunicorn** (`app:app`, port 5000), not waitress.
+Hosting moved to a dedicated Ubuntu VM (systemd services for app + tunnel; no memory
+contention). Runbook: **`task-tracker/deploy/MIGRATION.md`**. Deploy code updates with
+`cd ~/task-tracker && git pull && sudo systemctl restart tasktracker`. On Linux the app
+runs under **gunicorn** (`app:app`, port 5000), not waitress.
 
 ## Reference
 
