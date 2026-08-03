@@ -91,7 +91,7 @@ async function capture(photoType, fileInput, progressSlot) {
   msg.innerHTML = '<div class="alert alert-info py-2">Processing photo…</div>';
 
   // 1. Shrink + save to the offline outbox first (reliability over speed).
-  await TT.photo.queue(TASK_ID, photoType, file);
+  const key = await TT.photo.queue(TASK_ID, photoType, file);
 
   // 2. Optimistic UI update.
   if (photoType.startsWith("progress")) {
@@ -106,10 +106,10 @@ async function capture(photoType, fileInput, progressSlot) {
   msg.innerHTML = '<div class="alert alert-info py-2">Photo saved. Syncing…</div>';
 
   // 3. Try to sync now; if offline it stays queued and syncs later automatically.
-  const ok = await TT.sync.run();
-  msg.innerHTML = ok
-    ? '<div class="alert alert-success py-2">Saved &amp; synced.</div>'
-    : '<div class="alert alert-warning py-2">Saved offline. Will sync automatically when online.</div>';
+  //    Report what happened to THIS photo — an unrelated stuck item, or a sync
+  //    that was already running, must not make a successful upload look failed.
+  await TT.sync.run();
+  msg.innerHTML = syncMessage(await TT.sync.statusOf(key), key);
 
   fileInput.value = "";
 }

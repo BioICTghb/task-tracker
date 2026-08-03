@@ -43,6 +43,31 @@
     if (navigator.onLine && (await TT.db.outboxCount()) > 0) TT.sync.run();
   }, 30000);
 
+  // Turn the fate of one queued photo (TT.sync.statusOf) into an honest message.
+  // "Saved offline" used to be shown for any unsuccessful sync, including a
+  // perfectly good upload that merely coincided with the 30s background poll.
+  window.syncMessage = function (state, key) {
+    const err = (TT.sync.lastErrors && TT.sync.lastErrors.get(key)) || {};
+    if (state === "synced") {
+      return '<div class="alert alert-success py-2">Saved &amp; synced.</div>';
+    }
+    if (state === "offline") {
+      return '<div class="alert alert-warning py-2">Saved on your phone. '
+           + 'It uploads automatically when you are back online.</div>';
+    }
+    if (state === "dropped") {
+      return '<div class="alert alert-danger py-2">This photo could not be saved — '
+           + 'the job may have been deleted. Tell your manager before retaking it.</div>';
+    }
+    if (err.status === 409) {
+      return '<div class="alert alert-warning py-2">This job is <strong>on hold</strong>, '
+           + 'so the photo was not accepted. It is safe on your phone and will upload '
+           + 'once the hold is lifted.</div>';
+    }
+    return '<div class="alert alert-warning py-2">Saved on your phone — the server did not '
+         + 'accept it yet. It will retry automatically.</div>';
+  };
+
   // Ask the SW to background-sync even if the page later closes.
   async function requestBackgroundSync() {
     try {

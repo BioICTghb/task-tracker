@@ -83,6 +83,11 @@
     async removeOutbox(key) {
       return tx("outbox", "readwrite", (s) => s.delete(key));
     },
+    // Is this specific photo still waiting to upload? Lets a page report the fate
+    // of the photo just taken instead of the state of the whole outbox.
+    async hasOutbox(key) {
+      return (await tx("outbox", "readonly", (s) => s.get(key))) !== undefined;
+    },
     async outboxCount() {
       const all = await api.getOutbox();
       return all.length;

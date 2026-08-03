@@ -95,7 +95,7 @@ async function capture(photoType, fileInput, progressSlot) {
   const job = await TT.db.getLocalJob(LOCAL_ID);
   const targetId = (job && job.serverId) ? job.serverId : LOCAL_ID;
 
-  await TT.photo.queue(targetId, photoType, file);
+  const key = await TT.photo.queue(targetId, photoType, file);
 
   if (photoType.startsWith("progress")) {
     progressUsed.add(progressSlot);
@@ -107,10 +107,8 @@ async function capture(photoType, fileInput, progressSlot) {
   }
 
   msg.innerHTML = '<div class="alert alert-info py-2">Photo saved. Syncing…</div>';
-  const ok = await TT.sync.run();
-  msg.innerHTML = ok
-    ? '<div class="alert alert-success py-2">Saved &amp; synced.</div>'
-    : '<div class="alert alert-warning py-2">Saved offline. Will sync automatically when online.</div>';
+  await TT.sync.run();
+  msg.innerHTML = syncMessage(await TT.sync.statusOf(key), key);
   fileInput.value = "";
 }
 

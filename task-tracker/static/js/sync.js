@@ -4,7 +4,14 @@
  * window.TT.sync.run() returns true if the outbox is empty afterwards.
  */
 (function () {
-  let running = false;
+  // The sync in flight, if any. A second caller joins it instead of being told
+  // "failed" — a photo taken while the 30s background poll happened to be
+  // running used to report "Saved offline" on a perfectly good connection.
+  let inflight = null;
+
+  // Why the server refused a queued item, keyed by outbox key, so the page can
+  // explain itself instead of blaming the network.
+  const lastErrors = new Map();
 
   function setStatus(state) {
     const el = document.getElementById("net-status");
@@ -41,54 +48,86 @@
     return ok;
   }
 
-  async function run() {
-    if (running) return false;
-    if (!navigator.onLine) { setStatus("offline"); return false; }
-
-    running = true;
+  async function drain() {
     setStatus("syncing");
     let allOk = await createLocalJobs();
 
-    const items = await TT.db.getOutbox();
-    if (!items.length) {
-      running = false;
-      setStatus(navigator.onLine ? "online" : "offline");
-      return allOk;
-    }
+    // Keep draining until nothing new is left: a photo queued *while* this sync
+    // was running must not be left sitting until the next 30s poll.
+    const attempted = new Set();
+    for (let pass = 0; pass < 5; pass++) {
+      const items = (await TT.db.getOutbox()).filter((i) => !attempted.has(i.key));
+      if (!items.length) break;
 
-    for (const item of items) {
-      // Skip photos whose job hasn't been created on the server yet (still a
-      // local string id). They upload once their extra job syncs.
-      if (typeof item.task_id !== "number") { allOk = false; continue; }
-      try {
-        // Rebuild a Blob from the stored ArrayBuffer (new items) or use the
-        // legacy stored blob (older queued items).
-        const photo = item.buffer
-          ? new Blob([item.buffer], { type: "image/jpeg" })
-          : item.blob;
+      for (const item of items) {
+        attempted.add(item.key);
+        // Skip photos whose job hasn't been created on the server yet (still a
+        // local string id). They upload once their extra job syncs.
+        if (typeof item.task_id !== "number") { allOk = false; continue; }
+        try {
+          // Rebuild a Blob from the stored ArrayBuffer (new items) or use the
+          // legacy stored blob (older queued items).
+          const photo = item.buffer
+            ? new Blob([item.buffer], { type: "image/jpeg" })
+            : item.blob;
 
-        const fd = new FormData();
-        fd.append("photo_type", item.photo_type);
-        fd.append("timestamp", item.timestamp);
-        fd.append("photo", photo, `${item.task_id}_${item.photo_type}.jpg`);
+          const fd = new FormData();
+          fd.append("photo_type", item.photo_type);
+          fd.append("timestamp", item.timestamp);
+          fd.append("photo", photo, `${item.task_id}_${item.photo_type}.jpg`);
 
-        const res = await fetch(`/api/tasks/${item.task_id}/photo`, { method: "POST", body: fd });
-        if (res.ok) {
-          await TT.db.removeOutbox(item.key);
-        } else {
-          allOk = false; // server reachable but rejected — leave queued, try later
+          const res = await fetch(`/api/tasks/${item.task_id}/photo`, { method: "POST", body: fd });
+          if (res.ok) {
+            lastErrors.delete(item.key);
+            await TT.db.removeOutbox(item.key);
+          } else if (res.status === 404 || res.status === 400 || res.status === 413) {
+            // Permanently un-syncable (task deleted, malformed, too large).
+            // Retrying forever would keep the queue dirty and make every later
+            // photo report a failure it had nothing to do with.
+            lastErrors.set(item.key, { status: res.status, permanent: true });
+            await TT.db.removeOutbox(item.key);
+            allOk = false;
+          } else {
+            // Reachable but refused for now (409 on-hold, 5xx) — keep and retry.
+            lastErrors.set(item.key, { status: res.status, permanent: false });
+            allOk = false;
+          }
+        } catch (e) {
+          lastErrors.set(item.key, { status: 0, permanent: false });
+          allOk = false; // network dropped mid-sync
+          return allOk;
         }
-      } catch (e) {
-        allOk = false; // network dropped mid-sync
-        break;
       }
     }
+    return allOk;
+  }
 
-    running = false;
-    setStatus(navigator.onLine ? "online" : "offline");
-    return allOk && (await TT.db.outboxCount()) === 0;
+  async function run() {
+    if (!navigator.onLine) { setStatus("offline"); return false; }
+    if (inflight) return inflight;      // join it; don't report a false failure
+
+    inflight = (async () => {
+      try {
+        const allOk = await drain();
+        return allOk && (await TT.db.outboxCount()) === 0;
+      } finally {
+        setStatus(navigator.onLine ? "online" : "offline");
+        inflight = null;
+      }
+    })();
+    return inflight;
+  }
+
+  // How did *this* queued photo fare? -> "synced" | "offline" | "refused" | "dropped"
+  async function statusOf(key) {
+    if (key === undefined || key === null) return "synced";
+    if (!(await TT.db.hasOutbox(key))) {
+      const err = lastErrors.get(key);
+      return err && err.permanent ? "dropped" : "synced";
+    }
+    return navigator.onLine ? "refused" : "offline";
   }
 
   window.TT = window.TT || {};
-  window.TT.sync = { run, setStatus };
+  window.TT.sync = { run, setStatus, statusOf, lastErrors };
 })();

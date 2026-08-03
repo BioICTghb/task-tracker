@@ -43,7 +43,9 @@
     } catch (e) {
       buffer = await file.arrayBuffer();
     }
-    await TT.db.queuePhoto({
+    // Returns the outbox key, so the caller can report what happened to *this*
+    // photo rather than guessing from the state of the whole queue.
+    return TT.db.queuePhoto({
       task_id: taskId,
       photo_type: photoType,
       timestamp: new Date().toISOString(),
