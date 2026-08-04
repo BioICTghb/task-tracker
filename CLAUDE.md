@@ -82,6 +82,12 @@ not affect the live site.
   > Caveat by design: any line containing an operator's full display name assigns them, even
   > if the picker wasn't used. Full names rarely appear incidentally, and a line that does
   > name someone in full is fair to treat as theirs.
+- **Shift colours**: `SCHEDULE_SHIFT_COLORS` maps a cell colour to a shift by *nearest*
+  match (Excel pastes vary): green Early, amber Day, blue **Late**, red **Night**
+  (both `#ff0000` and `#c00000` anchor Night — they are >tolerance apart), pale-yellow
+  Drive. Any other colour is not a shift and is left out of the report summary.
+  `SCHEDULE_TEXT_LABELS` rewrites cell text for display only (`DRIJFVEER` → `pro-rate`);
+  the grid keeps whatever the manager pasted.
 - **Shift-change warning**: `schedule_cells.updated_at` advances only on a real change
   (text or color), `users.schedule_seen_at` records acknowledgement;
   `/api/schedule-changes` → sticky banner on the operator list, cleared by

@@ -64,8 +64,18 @@ SCHEDULE_ROWS = 5  # Mon-Fri
 SCHEDULE_SHIFT_COLORS = {
     "#92d050": "Early",
     "#ffc000": "Day",
-    "#00b0f0": "Night",
+    "#00b0f0": "Late",     # blue: was labelled "Night", but it is the late shift
+    "#ff0000": "Night",    # red: the actual night shift
+    # Excel's other standard red ("Dark Red") is far enough from #ff0000 to fall
+    # outside the match tolerance, so anchor it explicitly rather than lose it.
+    "#c00000": "Night",
     "#ffffcc": "Drive",
+}
+
+# Cell text that reads better to everyone else than the word pasted from Excel.
+# Matched case-insensitively; anything not listed is shown exactly as typed.
+SCHEDULE_TEXT_LABELS = {
+    "drijfveer": "pro-rate",
 }
 SCHEDULE_SHIFT_MATCH_TOLERANCE = 60  # max RGB Euclidean distance to still count as a match
 
@@ -87,6 +97,13 @@ def schedule_shift_label(hex_color):
         if dist < best_dist:
             best_label, best_dist = label, dist
     return best_label
+
+
+def shift_text_label(text):
+    """How a schedule cell's text is shown to people (report badges, the operator's
+    own week). The grid itself keeps whatever the manager pasted from Excel."""
+    t = (text or "").strip()
+    return SCHEDULE_TEXT_LABELS.get(t.lower(), t)
 
 
 def asset_version(static_dir):
@@ -552,7 +569,7 @@ def create_app():
             r = by_date.get(iso)
             out.append({
                 "date": iso, "label": d.strftime("%a %d %b"),
-                "text": (r["shift"] if r else "") or "",
+                "text": shift_text_label(r["shift"] if r else ""),
                 "color": (r["color"] if r else "") or "",
             })
         return jsonify({
@@ -951,7 +968,7 @@ def create_app():
 
     def todays_shift_summary():
         """Who's on which shift today (the day the report is viewed), from the
-        schedule's color-coded cells. Only Early/Day/Night/Drive are shown —
+        schedule's color-coded cells. Only Early/Day/Late/Night/Drive are shown —
         holidays, JV, and blank cells are left out."""
         today = today_local()
         rows = db.query(
@@ -966,7 +983,8 @@ def create_app():
             label = schedule_shift_label(r["color"])
             if not label:
                 continue
-            out.append({"name": name, "shift": label, "text": r["shift"]})
+            out.append({"name": name, "shift": label,
+                        "text": shift_text_label(r["shift"])})
         return {"date": today, "entries": out}
 
     @app.route("/report")
