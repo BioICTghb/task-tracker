@@ -845,6 +845,7 @@ def create_app():
     _JOB_SELECT = """
             SELECT t.id, t.title, t.status, t.created_at, t.started_at, t.completed_at,
                    t.is_extra, t.is_rent, t.daily_of, t.started_by, t.completed_by, t.held_seconds,
+                   t.on_hold,
                    bp.file_path AS before_path, bp.timestamp AS before_ts,
                    ap.file_path AS after_path,  ap.timestamp AS after_ts
             FROM tasks t
@@ -905,15 +906,31 @@ def create_app():
             d_from, d_to = d_to, d_from
         return d_from, d_to
 
+    def _days_since(v):
+        """Whole days between a stored timestamp and today, or None if unparseable."""
+        s = v.strftime("%Y-%m-%d") if hasattr(v, "strftime") else str(v or "")[:10]
+        try:
+            d = datetime.strptime(s, "%Y-%m-%d").date()
+        except ValueError:
+            return None
+        return (now_local().date() - d).days
+
     def fetch_started(d_from, d_to):
-        """Jobs in progress (started, not finished) whose start falls in the range —
-        same rich photo data so they render as photo cards on their own report page."""
+        """Every job still in progress, not just those started inside the report's
+        dates: 'started' is the job's current state, so a job opened last week and
+        still unfinished belongs in this list — that is the point of it. Oldest
+        first, so jobs that have been hanging around surface at the top.
+
+        Same rich photo data as completed jobs, so they render as photo cards on
+        their own report page. The date range is deliberately unused."""
         rows = db.query(
-            _JOB_SELECT + " WHERE t.status='started' AND DATE(t.started_at) BETWEEN %s AND %s"
-            " ORDER BY t.started_at, t.id",
-            (d_from, d_to),
+            _JOB_SELECT + " WHERE t.status='started' AND t.is_daily=0"
+            " ORDER BY t.started_at, t.id"
         )
-        return _enrich_jobs(rows)
+        rows = _enrich_jobs(rows)
+        for r in rows:
+            r["days_open"] = _days_since(r["started_at"])
+        return rows
 
     def report_summary(d_from, d_to):
         """Status breakdown of the day's tasks, with SVG pie slices, so the manager

@@ -64,6 +64,9 @@ not affect the live site.
 - **Extra** (`is_extra`, cyan) / **Rent** (`is_rent`, blue; button gated to `RENT_USERNAMES`)
   are operator-created jobs. **On-hold** hides/blocks tasks for operators. **Report** is
   keyed on completion date, has an in-progress page with photo cards, and a status pie.
+  The **"Still in progress"** list is deliberately *not* date-filtered — `status='started'`
+  is a current state, so it shows every unfinished job whenever it began (oldest first,
+  with an "Open for" age, ≥7 days in red). Don't re-add a date range to `fetch_started()`.
 - Roles: `manager` + `developer` are manager-level (`MANAGER_ROLES`); `technician` = operator.
 - **@-mention** (`manager.html` publish box): typing `@` opens an operator autocomplete
   anchored at the caret (a hidden mirror `div` computes the `@`'s pixel position — textareas
