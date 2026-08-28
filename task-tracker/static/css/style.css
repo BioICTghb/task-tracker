@@ -155,9 +155,15 @@
 /* Default (no shift color = unplanned): stays white with black text in both
    light and dark mode. A shift color, when present, only overrides the
    background (inline style) — text stays black either way. */
+/* Mon-Sun in five columns: the working week on the first row, Sat and Sun
+   underneath it. Seven across would be too cramped to read on a work phone. */
+.schedule-chips { display: grid; grid-template-columns: repeat(5, 1fr); gap: .5rem; }
 .schedule-chip {
-  flex: 1; text-align: center; border-radius: .6rem; padding: .4rem .2rem;
+  text-align: center; border-radius: .6rem; padding: .4rem .2rem;
   background: #fff; color: #000; font-size: .78rem;
 }
+/* Rest days read as quieter than working days. A real shift colour is applied
+   inline, so it always wins over this. */
+.schedule-chip.weekend { background: #f1f3f5; }
 .schedule-chip-day { font-size: .68rem; opacity: .75; margin-bottom: .1rem; }
 .schedule-chip-shift { font-weight: 600; }

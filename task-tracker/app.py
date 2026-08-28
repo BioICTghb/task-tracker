@@ -54,7 +54,7 @@ SCHEDULE_OPERATORS = [
     "Taras Dymkar", "Sebastian Rek", "Daniel Gorzynski", "Damian Meczykowski",
     "Damian Garczynski", "Ivan Dymkar", "Savrii Volodymyr", "Bartek Berendt",
 ]
-SCHEDULE_ROWS = 5  # Mon-Fri
+SCHEDULE_ROWS = 7  # Mon-Sun (weekend shifts are worked too)
 
 # Schedule cell colors that map to an actual shift (matches the swatches offered
 # on the Schedule page). Any other color (ADV/holiday/JV/other) or no color is
@@ -456,7 +456,7 @@ def create_app():
         return first, nxt - timedelta(days=1)
 
     def _month_week_starts(first, last):
-        """Monday of each week (Mon-Fri block) that overlaps the given month."""
+        """Monday of each week (Mon-Sun block) that overlaps the given month."""
         monday = _monday_of(first)
         starts = []
         while monday <= last:

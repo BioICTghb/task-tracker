@@ -85,6 +85,11 @@ not affect the live site.
   > Caveat by design: any line containing an operator's full display name assigns them, even
   > if the picker wasn't used. Full names rarely appear incidentally, and a line that does
   > name someone in full is fair to treat as theirs.
+- **Schedule week** is **Mon–Sun** (`SCHEDULE_ROWS = 7`); everything derives from that
+  constant, including the grid rows, `/api/my-schedule`, and the save validation, so
+  don't hard-code 5 or 7 anywhere. Weeks saved before weekends existed simply have no
+  Sat/Sun rows; re-saving one writes them as blank without flagging a change. The
+  operator's widget lays the week out in a 5-column grid so Sat/Sun sit under Mon–Fri.
 - **Shift colours**: `SCHEDULE_SHIFT_COLORS` maps a cell colour to a shift by *nearest*
   match (Excel pastes vary): green Early, amber Day, blue **Late**, red **Night**
   (both `#ff0000` and `#c00000` anchor Night — they are >tolerance apart), pale-yellow
