@@ -61,6 +61,13 @@ not affect the live site.
 - **Daily tasks**: a `DAILY …` published line (or the Make-daily toggle) = a hidden
   `is_daily` template; each day an instance `DAILY - <date> - …` (`daily_of`) is generated.
   Operators + edit list show only today's; masters under the "Daily masters" filter.
+  **Roll-over** (`sweep_stale_dailies()`, run from `ensure_todays_dailies()` so every
+  page load does it — no cron): once a daily's day has passed it can no longer be
+  worked, so a *started* one is completed at **23:59:59 of its own day** (not "now",
+  which would date the work to whenever a page happened to load) and flagged
+  `auto_closed=1`; a *never-started* one is deleted, guarded on having no photos.
+  On-hold instances are skipped — a hold is a manager's decision. `auto_closed` is
+  deliberately invisible in the UI: these count as ordinary completions.
 - **Extra** (`is_extra`, cyan) / **Rent** (`is_rent`, blue; button gated to `RENT_USERNAMES`)
   are operator-created jobs. **On-hold** hides/blocks tasks for operators. **Report** is
   keyed on completion date, has an in-progress page with photo cards, and a status pie.

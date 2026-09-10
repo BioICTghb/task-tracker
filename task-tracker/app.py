@@ -1207,10 +1207,54 @@ def create_app():
         return send_file(buf, mimetype="application/zip", as_attachment=True,
                          download_name="photos-%s.zip" % label)
 
+    def sweep_stale_dailies():
+        """Close out daily instances whose day has passed, so they stop collecting.
+
+        A daily belongs to its day: once that day is over it can no longer be
+        worked (operators only ever see today's), so leaving it 'started' forever
+        just grew a list of stale jobs nobody could reach from the UI.
+
+          - started but unfinished -> completed at the end of its own day, flagged
+            auto_closed. Closing at 'now' would date the work to whenever someone
+            happened to load a page, sometimes weeks later.
+          - never started -> deleted: nothing was done, so there is nothing worth
+            keeping. Guarded on having no photos, so a job with any field
+            documentation is never removed by an automatic sweep.
+
+        On-hold tasks are skipped either way — a hold is a deliberate decision by
+        a manager and the sweep has no business overriding it."""
+        today = today_local()
+        for r in db.query(
+            "SELECT id, created_at, started_at, started_by FROM tasks "
+            "WHERE daily_of IS NOT NULL AND status='started' AND on_hold=0 "
+            "AND DATE(created_at) < %s", (today,)
+        ):
+            day = str(r["created_at"])[:10] if not hasattr(r["created_at"], "strftime") \
+                else r["created_at"].strftime("%Y-%m-%d")
+            end = "%s 23:59:59" % day
+            started = str(r["started_at"] or "")[:19] if not hasattr(r["started_at"], "strftime") \
+                else r["started_at"].strftime("%Y-%m-%d %H:%M:%S")
+            if started and started > end:      # started late in the evening
+                end = started
+            db.execute(
+                "UPDATE tasks SET status='completed', completed_at=%s, auto_closed=1, "
+                "completed_by=COALESCE(completed_by, started_by) WHERE id=%s",
+                (end, r["id"]),
+            )
+        for r in db.query(
+            "SELECT id FROM tasks WHERE daily_of IS NOT NULL AND status='open' "
+            "AND on_hold=0 AND DATE(created_at) < %s", (today,)
+        ):
+            if db.query("SELECT 1 FROM task_photos WHERE task_id=%s", (r["id"],), one=True):
+                continue                        # has photos - never auto-delete those
+            db.execute("DELETE FROM tasks WHERE id=%s", (r["id"],))
+
     def ensure_todays_dailies():
-        """Create today's instance for each daily template that lacks one. Instances
-        are normal tasks titled 'DAILY - <date> - <template>' with daily_of set;
+        """Roll the dailies over: close out any whose day has passed, then create
+        today's instance for each daily template that lacks one. Instances are
+        normal tasks titled 'DAILY - <date> - <template>' with daily_of set;
         templates (is_daily=1) are never shown to operators themselves."""
+        sweep_stale_dailies()
         today = today_local()
         now = now_local().strftime("%Y-%m-%d %H:%M:%S")
         for tpl in db.query("SELECT id, title, assigned_to FROM tasks WHERE is_daily=1"):

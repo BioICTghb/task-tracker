@@ -106,6 +106,10 @@ def _sqlite_init_schema(conn):
         # instance is generated with daily_of set to that template's id.
         "ALTER TABLE tasks ADD COLUMN is_daily INTEGER NOT NULL DEFAULT 0",
         "ALTER TABLE tasks ADD COLUMN daily_of INTEGER",
+        # 1 when a daily instance was closed by the end-of-day sweep rather than
+        # by an operator finishing it. Invisible in the UI (it counts as a normal
+        # completion), but it keeps the two apart when digging through the data.
+        "ALTER TABLE tasks ADD COLUMN auto_closed INTEGER NOT NULL DEFAULT 0",
         "ALTER TABLE schedule_cells ADD COLUMN color TEXT NOT NULL DEFAULT ''",
         # Operator a job was tagged for with "@Name" in the published line, so
         # their own jobs sort first and stand out in their list.
