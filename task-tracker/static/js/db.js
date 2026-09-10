@@ -83,6 +83,17 @@
     async removeOutbox(key) {
       return tx("outbox", "readwrite", (s) => s.delete(key));
     },
+    // Queue a shift clock-in/out. Shares the photo outbox so it inherits the same
+    // retry, ordering and "did mine go through?" handling; sync.js tells the two
+    // apart by `kind`.
+    async queuePunch(action, clientKey) {
+      return tx("outbox", "readwrite", (s) => s.add({
+        kind: "shift",
+        action: action,
+        client_key: clientKey,
+        timestamp: new Date().toISOString(),
+      }));
+    },
     // Is this specific photo still waiting to upload? Lets a page report the fate
     // of the photo just taken instead of the state of the whole outbox.
     async hasOutbox(key) {

@@ -61,6 +61,38 @@
 
       for (const item of items) {
         attempted.add(item.key);
+        // Shift clock-in/out. Sent in queue order so a start always lands before
+        // the end that followed it, and carrying the tap time + client_key so a
+        // replay is a no-op rather than a second shift.
+        if (item.kind === "shift") {
+          try {
+            const res = await fetch("/api/shift", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                action: item.action,
+                timestamp: item.timestamp,
+                client_key: item.client_key,
+              }),
+            });
+            if (res.ok) {
+              lastErrors.delete(item.key);
+              await TT.db.removeOutbox(item.key);
+            } else if (res.status === 400 || res.status === 403) {
+              lastErrors.set(item.key, { status: res.status, permanent: true });
+              await TT.db.removeOutbox(item.key);
+              allOk = false;
+            } else {
+              lastErrors.set(item.key, { status: res.status, permanent: false });
+              allOk = false;
+            }
+          } catch (e) {
+            lastErrors.set(item.key, { status: 0, permanent: false });
+            allOk = false;
+            return allOk;
+          }
+          continue;
+        }
         // Skip photos whose job hasn't been created on the server yet (still a
         // local string id). They upload once their extra job syncs.
         if (typeof item.task_id !== "number") { allOk = false; continue; }

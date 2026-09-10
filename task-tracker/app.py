@@ -99,6 +99,30 @@ def schedule_shift_label(hex_color):
     return best_label
 
 
+# Clock-in/out. A shift never runs longer than this, whatever the roster says —
+# it is the backstop for an operator who forgets to clock out.
+SHIFT_MAX_HOURS = 12.0
+
+# Roster cell texts that mean a shift without stating its length.
+SHIFT_NAMED_HOURS = {"DRIVE": 7.6, "DRIJFVEER": 7.6}
+
+
+def roster_hours(text):
+    """Hours a roster cell is worth: '7,6' -> 7.6, 'DRIVE' -> 7.6. None for
+    holiday/ADV/JV or anything unrecognised — those are not shifts, so a clock-in
+    against one has no rostered length to expire against."""
+    t = (text or "").strip().upper()
+    if not t:
+        return None
+    if t in SHIFT_NAMED_HOURS:
+        return SHIFT_NAMED_HOURS[t]
+    m = re.fullmatch(r"(\d{1,2})(?:[.,](\d{1,2}))?", t)
+    if not m:
+        return None
+    hours = float(m.group(1) + "." + (m.group(2) or "0"))
+    return hours if 0 < hours <= 24 else None
+
+
 def shift_text_label(text):
     """How a schedule cell's text is shown to people (report badges, the operator's
     own week). The grid itself keeps whatever the manager pasted from Excel."""
@@ -673,6 +697,124 @@ def create_app():
             shift = (r["shift"] or "").strip()
             changes.append({"date": wd, "label": label, "shift": shift or "— (no longer on shift)"})
         return jsonify({"changes": changes, "count": len(changes)})
+
+    # ------------------------------------------------------------ shift clock
+    def _fmt(dt):
+        return dt.strftime("%Y-%m-%d %H:%M:%S")
+
+    def _as_dt(v):
+        """A stored timestamp (str on sqlite, datetime on mysql) -> aware datetime."""
+        if hasattr(v, "strftime"):
+            return v if v.tzinfo else v.replace(tzinfo=BRUSSELS)
+        try:
+            return datetime.strptime(str(v)[:19], "%Y-%m-%d %H:%M:%S").replace(tzinfo=BRUSSELS)
+        except ValueError:
+            return None
+
+    def shift_allowance(user_name, started):
+        """How long this shift may run: the hours on that day's roster cell, capped
+        by SHIFT_MAX_HOURS. Falls back to the cap when the day isn't a rostered
+        shift (holiday, or the operator isn't on the roster at all)."""
+        hours = None
+        col = _operator_col_for(user_name)
+        if col:
+            row = db.query(
+                "SELECT shift FROM schedule_cells WHERE col_index=%s AND work_date=%s",
+                (col, started.strftime("%Y-%m-%d")), one=True)
+            if row:
+                hours = roster_hours(row["shift"])
+        return timedelta(hours=min(hours or SHIFT_MAX_HOURS, SHIFT_MAX_HOURS))
+
+    def auto_close_stale_shifts():
+        """Close shifts whose rostered hours have run out. Someone who forgets to
+        clock out is clocked out for them, at the end of the hours they were
+        rostered for — never at 'now', which would invent time they didn't work.
+        Marked auto_closed=1 so a real clock-out stays distinguishable."""
+        now = now_local()
+        for s in db.query(
+            "SELECT s.id, s.started_at, u.display_name FROM shifts s "
+            "JOIN users u ON u.id = s.user_id WHERE s.ended_at IS NULL"
+        ):
+            started = _as_dt(s["started_at"])
+            if not started:
+                continue
+            end = started + shift_allowance(s["display_name"], started)
+            if now >= end:
+                db.execute("UPDATE shifts SET ended_at=%s, auto_closed=1 WHERE id=%s",
+                           (_fmt(end), s["id"]))
+
+    def current_shift(uid):
+        return db.query(
+            "SELECT id, started_at FROM shifts WHERE user_id=%s AND ended_at IS NULL "
+            "ORDER BY id DESC", (uid,), one=True)
+
+    def shift_state(uid):
+        row = current_shift(uid)
+        if not row:
+            return {"on_shift": False}
+        started = _as_dt(row["started_at"])
+        return {
+            "on_shift": True,
+            "started_at": _fmt(started) if started else None,
+            "since": started.strftime("%H:%M") if started else "",
+            "seconds": int((now_local() - started).total_seconds()) if started else 0,
+        }
+
+    @app.route("/api/shift")
+    def api_shift_get():
+        user = current_user() or {}
+        if not user.get("id"):
+            return jsonify({"error": "not logged in"}), 403
+        auto_close_stale_shifts()
+        return jsonify(shift_state(user["id"]))
+
+    @app.route("/api/shift", methods=["POST"])
+    def api_shift_punch():
+        """Clock in or out. Body: {action: 'start'|'end', timestamp, client_key}.
+
+        The action is explicit rather than a toggle: a double tap, or a phone
+        showing a stale screen, must not flip the clock the wrong way. The
+        timestamp is when the operator tapped, so a punch queued offline records
+        the real moment rather than when the phone got signal. client_key makes a
+        replayed punch a no-op instead of a second shift."""
+        user = current_user() or {}
+        uid = user.get("id")
+        if not uid:
+            return jsonify({"error": "not logged in"}), 403
+        data = request.get_json(silent=True) or {}
+        action = data.get("action")
+        if action not in ("start", "end"):
+            return jsonify({"error": "invalid action"}), 400
+        key = (data.get("client_key") or "").strip() or None
+        when = parse_ts(data.get("timestamp"))
+
+        if key and db.query("SELECT id FROM shifts WHERE client_key=%s", (key,), one=True):
+            return jsonify(dict(shift_state(uid), duplicate=True))   # already applied
+
+        auto_close_stale_shifts()
+        open_shift = current_shift(uid)
+
+        if action == "start":
+            if open_shift:
+                # Already clocked in (another device, or the phone missed the reply).
+                return jsonify(dict(shift_state(uid), already=True))
+            db.execute(
+                "INSERT INTO shifts (user_id, started_at, client_key) VALUES (%s, %s, %s)",
+                (uid, _fmt(when), key),
+            )
+        else:
+            if not open_shift:
+                return jsonify(dict(shift_state(uid), already=True))
+            started = _as_dt(open_shift["started_at"])
+            # Never end before the start, and never beyond the rostered allowance:
+            # a punch that synced late must not stretch the shift past its cap.
+            end = when
+            if started:
+                end = max(end, started)
+                end = min(end, started + shift_allowance(user.get("name"), started))
+            db.execute("UPDATE shifts SET ended_at=%s, client_key=COALESCE(client_key,%s) "
+                       "WHERE id=%s", (_fmt(end), key, open_shift["id"]))
+        return jsonify(shift_state(uid))
 
     @app.route("/api/schedule-ack", methods=["POST"])
     def api_schedule_ack():

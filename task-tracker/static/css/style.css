@@ -155,6 +155,9 @@
 /* Default (no shift color = unplanned): stays white with black text in both
    light and dark mode. A shift color, when present, only overrides the
    background (inline style) — text stays black either way. */
+/* Shift clock: one compact row, but a full-width tap target for gloved hands. */
+.shift-btn { font-weight: 700; letter-spacing: .5px; padding: .6rem .5rem; }
+
 /* Mon-Sun in five columns: the working week on the first row, Sat and Sun
    underneath it. Seven across would be too cramped to read on a work phone. */
 .schedule-chips { display: grid; grid-template-columns: repeat(5, 1fr); gap: .5rem; }

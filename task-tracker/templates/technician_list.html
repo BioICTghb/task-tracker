@@ -16,6 +16,8 @@
   <div class="avatar-circle">{{ current_user.name[0] }}</div>
 </div>
 
+<button id="shift-btn" class="btn btn-outline-success w-100 mb-3 shift-btn">START SHIFT</button>
+
 <div class="d-flex gap-2 mb-3">
   <button id="btn-extra" class="icon-tile flex-fill">
     <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
@@ -182,6 +184,86 @@ if (rentBtn) rentBtn.addEventListener("click",
   () => createUnplanned("rent", "Rent job — short description of the work"));
 
 load();
+
+/* ---------------- Shift clock: one button, start and end ------------------- */
+(function () {
+  const btn = document.getElementById("shift-btn");
+  const LS = "tt-shift";                     // survives a reload while offline
+  // {on: bool, startMs: number|null, pending: bool}
+  let state = { on: false, startMs: null, pending: false };
+
+  try { Object.assign(state, JSON.parse(localStorage.getItem(LS) || "{}")); } catch (e) {}
+  function save() { try { localStorage.setItem(LS, JSON.stringify(state)); } catch (e) {} }
+
+  function hhmm(ms) {
+    const d = new Date(ms);
+    return String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0");
+  }
+  function elapsed(ms) {
+    const m = Math.max(0, Math.floor((Date.now() - ms) / 60000));
+    return m < 60 ? `${m}m` : `${Math.floor(m / 60)}h ${String(m % 60).padStart(2, "0")}m`;
+  }
+
+  function render() {
+    if (state.on && state.startMs) {
+      btn.className = "btn btn-success w-100 mb-3 shift-btn";
+      btn.textContent = `ON SHIFT since ${hhmm(state.startMs)} (${elapsed(state.startMs)})`
+                        + (state.pending ? " · not synced" : "");
+    } else {
+      btn.className = "btn btn-outline-success w-100 mb-3 shift-btn";
+      btn.textContent = "START SHIFT" + (state.pending ? " · not synced" : "");
+    }
+  }
+
+  async function punchesQueued() {
+    return (await TT.db.getOutbox()).some((i) => i.kind === "shift");
+  }
+
+  // The server is the source of truth, except while this phone still has punches
+  // queued — until those land, what the operator tapped is the truer story.
+  async function refreshFromServer() {
+    if (!navigator.onLine || await punchesQueued()) return;
+    try {
+      const res = await fetch("/api/shift");
+      if (!res.ok) return;
+      const s = await res.json();
+      state = s.on_shift
+        ? { on: true, startMs: Date.now() - (s.seconds || 0) * 1000, pending: false }
+        : { on: false, startMs: null, pending: false };
+      save(); render();
+    } catch (e) { /* offline — keep what we have */ }
+  }
+
+  btn.addEventListener("click", async () => {
+    const ending = state.on;
+    const msg = ending
+      ? `End your shift?\n\nStarted ${hhmm(state.startMs)} — ${elapsed(state.startMs)} ago.`
+      : "Start your shift now?";
+    if (!confirm(msg)) return;
+
+    const key = "s-" + ((self.crypto && crypto.randomUUID)
+      ? crypto.randomUUID() : Date.now() + "-" + Math.random().toString(16).slice(2));
+    await TT.db.queuePunch(ending ? "end" : "start", key);
+
+    // Show the new state immediately; it is already safely queued.
+    state = ending ? { on: false, startMs: null, pending: true }
+                   : { on: true, startMs: Date.now(), pending: true };
+    save(); render();
+
+    await TT.sync.run();
+    state.pending = await punchesQueued();
+    save(); render();
+    await refreshFromServer();
+  });
+
+  render();
+  refreshFromServer();
+  setInterval(render, 60000);                       // keep the elapsed time honest
+  setInterval(refreshFromServer, 300000);           // catch an auto clock-out
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") refreshFromServer();
+  });
+})();
 
 // "My schedule": one week at a time, scrollable with prev/today/next.
 let scheduleOffset = 0;

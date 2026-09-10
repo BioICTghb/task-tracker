@@ -57,6 +57,25 @@ def _sqlite_init_schema(conn):
           active INTEGER NOT NULL DEFAULT 1,
           created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
         );
+        CREATE TABLE IF NOT EXISTS shifts (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          user_id INTEGER NOT NULL,
+          started_at TIMESTAMP NOT NULL,
+          ended_at TIMESTAMP,
+          -- 1 when the clock-out was generated because the rostered hours ran out
+          -- rather than the operator pressing the button.
+          auto_closed INTEGER NOT NULL DEFAULT 0,
+          -- Id minted on the phone, so replaying a punch queued offline cannot
+          -- create the same shift twice.
+          client_key TEXT
+        );
+        """
+    )
+    conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_shifts_client_key ON shifts(client_key)"
+    )
+    conn.execute(
+        """
         CREATE TABLE IF NOT EXISTS schedule_cells (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
           work_date TEXT NOT NULL,

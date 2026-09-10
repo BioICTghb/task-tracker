@@ -85,6 +85,16 @@ not affect the live site.
   > Caveat by design: any line containing an operator's full display name assigns them, even
   > if the picker wasn't used. Full names rarely appear incidentally, and a line that does
   > name someone in full is fair to treat as theirs.
+- **Shift clock** (operator list, one button): `shifts(user_id, started_at, ended_at,
+  auto_closed, client_key)`; open shift = `ended_at IS NULL`. `POST /api/shift` takes an
+  explicit `action` (`start`/`end`), never a toggle, plus the phone's tap `timestamp` and
+  a `client_key` so a punch replayed from the offline queue can't create a second shift.
+  Punches ride the **photo outbox** (`kind:"shift"`, drained in order by `sync.js`), so
+  clocking in with no signal records the tap time. **Auto clock-out**: `roster_hours()`
+  reads that day's roster cell (`7,6` / `11,6` / `DRIVE` = 7.6; anything else is holiday
+  = no shift), capped by `SHIFT_MAX_HOURS` (12) and used as the fallback too; a forgotten
+  clock-out is closed at `started_at + allowance` (never at 'now' — that would invent
+  hours) and flagged `auto_closed=1`. Swept lazily from the shift endpoints, no cron.
 - **Schedule week** is **Mon–Sun** (`SCHEDULE_ROWS = 7`); everything derives from that
   constant, including the grid rows, `/api/my-schedule`, and the save validation, so
   don't hard-code 5 or 7 anywhere. Weeks saved before weekends existed simply have no
