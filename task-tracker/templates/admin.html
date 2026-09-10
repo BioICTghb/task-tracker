@@ -27,6 +27,7 @@
         <select name="role" class="form-select">
           <option value="technician">Operator</option>
           <option value="manager">Manager</option>
+          <option value="developer">Developer</option>
         </select>
       </div>
       <div class="col-6 col-md-2">
@@ -45,7 +46,18 @@
     <tr>
       <td>{{ u.display_name }}</td>
       <td>{{ u.username }}</td>
-      <td><span class="badge text-bg-{{ 'primary' if u.role == 'manager' else 'secondary' }}">{{ 'Manager' if u.role == 'manager' else 'Operator' }}</span></td>
+      <td>
+        {# Roles are set from a real vocabulary, so a Developer is never mislabelled
+           as an Operator just because it isn't the literal role 'manager'. #}
+        <form method="post" action="/admin/users/{{ u.id }}/role" class="d-inline-flex gap-1">
+          <select name="role" class="form-select form-select-sm" style="width:auto">
+            {% for value, label in role_labels.items() %}
+            <option value="{{ value }}" {{ 'selected' if u.role == value }}>{{ label }}</option>
+            {% endfor %}
+          </select>
+          <button class="btn btn-outline-secondary btn-sm">Save</button>
+        </form>
+      </td>
       <td class="text-end">
         <form method="post" action="/admin/users/{{ u.id }}/password" class="d-inline-flex gap-1 me-2">
           <input name="password" class="form-control form-control-sm" style="width:120px" placeholder="new password" minlength="4" required>

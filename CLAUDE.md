@@ -75,6 +75,14 @@ not affect the live site.
   is a current state, so it shows every unfinished job whenever it began (oldest first,
   with an "Open for" age, ≥7 days in red). Don't re-add a date range to `fetch_started()`.
 - Roles: `manager` + `developer` are manager-level (`MANAGER_ROLES`); `technician` = operator.
+  `ROLE_LABELS` is the vocabulary — label from it, never `'Manager' if role=='manager'
+  else 'Operator'`, which silently demoted developers in the UI. Roles are assignable on
+  create and changeable at `/admin/users/<id>/role`; guards refuse to strip your own
+  manager access or the last manager-level account (counted across `MANAGER_ROLES`).
+- **Shifts page** (`/shifts`, manager-level): who is clocked in right now, shifts in a
+  date range keyed on the day the shift *started* (so a night shift stays on its own
+  day), hours per operator, and the rostered hours beside the worked ones. Auto-closed
+  shifts are badged so those times are read as approximate.
 - **@-mention** (`manager.html` publish box): typing `@` opens an operator autocomplete
   anchored at the caret (a hidden mirror `div` computes the `@`'s pixel position — textareas
   expose no caret coords). Filters as you type; ↑/↓ navigate, Tab/Enter or click select,

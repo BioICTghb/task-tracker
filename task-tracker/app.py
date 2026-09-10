@@ -47,6 +47,10 @@ RENT_USERNAMES = {"taras_d", "ivan_d", "sebastian_r", "tomasz_m", "sebastien_p"}
 # a manager with a different label.
 MANAGER_ROLES = {"manager", "developer"}
 
+# Assignable roles and how they're labelled. 'developer' is manager-level with a
+# different title, so it must never be presented as an operator.
+ROLE_LABELS = {"manager": "Manager", "developer": "Developer", "technician": "Operator"}
+
 # Work-schedule grid columns (C1-C12), fixed order matching the Excel sheet
 # managers currently keep shifts in.
 SCHEDULE_OPERATORS = [
@@ -422,7 +426,8 @@ def create_app():
             "SELECT id, username, display_name, role, active, created_at "
             "FROM users ORDER BY role, username"
         )
-        return render_template("admin.html", users=users, msg=request.args.get("msg"))
+        return render_template("admin.html", users=users, msg=request.args.get("msg"),
+                               role_labels=ROLE_LABELS)
 
     @app.route("/admin/users", methods=["POST"])
     @manager_required
@@ -430,7 +435,7 @@ def create_app():
         username = (request.form.get("username") or "").strip().lower()
         display_name = (request.form.get("display_name") or "").strip()
         password = request.form.get("password") or ""
-        role = request.form.get("role") if request.form.get("role") in ("manager", "technician") else "technician"
+        role = request.form.get("role") if request.form.get("role") in ROLE_LABELS else "technician"
         if not username or not display_name or len(password) < 4:
             return redirect(url_for("admin", msg="Name, login and a 4+ char password are required."))
         if db.query("SELECT id FROM users WHERE username=%s", (username,), one=True):
@@ -455,17 +460,45 @@ def create_app():
                    (generate_password_hash(password), uid))
         return redirect(url_for("admin", msg="Password updated."))
 
+    def _manager_level_count():
+        """Accounts that can still administer the app. Counts every manager-level
+        role, not just 'manager' — a developer keeps the lights on too."""
+        marks = ",".join(["%s"] * len(MANAGER_ROLES))
+        return db.query(
+            f"SELECT COUNT(*) AS n FROM users WHERE active=1 AND role IN ({marks})",
+            tuple(sorted(MANAGER_ROLES)), one=True)["n"]
+
     @app.route("/admin/users/<int:uid>/delete", methods=["POST"])
     @manager_required
     def admin_delete_user(uid):
         if uid == current_user()["id"]:
             return redirect(url_for("admin", msg="You can't delete your own account."))
-        managers = db.query("SELECT COUNT(*) AS n FROM users WHERE role='manager' AND active=1", one=True)["n"]
         target = db.query("SELECT role FROM users WHERE id=%s", (uid,), one=True)
-        if target and target["role"] == "manager" and managers <= 1:
-            return redirect(url_for("admin", msg="Keep at least one manager."))
+        if target and target["role"] in MANAGER_ROLES and _manager_level_count() <= 1:
+            return redirect(url_for("admin", msg="Keep at least one manager-level account."))
         db.execute("DELETE FROM users WHERE id=%s", (uid,))
         return redirect(url_for("admin", msg="Operator removed."))
+
+    @app.route("/admin/users/<int:uid>/role", methods=["POST"])
+    @manager_required
+    def admin_set_role(uid):
+        """Change someone's role — the only way to hand out 'developer', which is
+        manager-level with its own title."""
+        role = request.form.get("role")
+        if role not in ROLE_LABELS:
+            return redirect(url_for("admin", msg="Unknown role."))
+        target = db.query("SELECT role, display_name FROM users WHERE id=%s", (uid,), one=True)
+        if not target:
+            abort(404)
+        losing_access = target["role"] in MANAGER_ROLES and role not in MANAGER_ROLES
+        if losing_access:
+            if uid == current_user()["id"]:
+                return redirect(url_for("admin", msg="You can't remove your own manager access."))
+            if _manager_level_count() <= 1:
+                return redirect(url_for("admin", msg="Keep at least one manager-level account."))
+        db.execute("UPDATE users SET role=%s WHERE id=%s", (role, uid))
+        return redirect(url_for("admin",
+                                msg=f"{target['display_name']} is now {ROLE_LABELS[role]}."))
 
     # ----------------------------------------------------------- work schedule
     def _monday_of(d):
@@ -815,6 +848,57 @@ def create_app():
             db.execute("UPDATE shifts SET ended_at=%s, client_key=COALESCE(client_key,%s) "
                        "WHERE id=%s", (_fmt(end), key, open_shift["id"]))
         return jsonify(shift_state(uid))
+
+    @app.route("/shifts")
+    @manager_required
+    def shifts_page():
+        """Who is clocked in now, and the shifts worked over a date range.
+
+        Rows are keyed on the day the shift *started*, so a night shift running
+        past midnight stays with the day it belongs to rather than splitting."""
+        auto_close_stale_shifts()
+        d_from, d_to = parse_range()
+        rows = db.query(
+            "SELECT s.id, s.started_at, s.ended_at, s.auto_closed, u.display_name "
+            "FROM shifts s JOIN users u ON u.id = s.user_id "
+            "WHERE DATE(s.started_at) BETWEEN %s AND %s "
+            "ORDER BY s.started_at DESC, u.display_name",
+            (d_from, d_to),
+        )
+        now = now_local()
+        shifts, totals, open_now = [], {}, []
+        for r in rows:
+            started = _as_dt(r["started_at"])
+            ended = _as_dt(r["ended_at"]) if r["ended_at"] else None
+            secs = int(((ended or now) - started).total_seconds()) if started else 0
+            day = started.strftime("%Y-%m-%d") if started else ""
+            rostered = None
+            if started:
+                col = _operator_col_for(r["display_name"])
+                if col:
+                    cell = db.query(
+                        "SELECT shift FROM schedule_cells WHERE col_index=%s AND work_date=%s",
+                        (col, day), one=True)
+                    if cell:
+                        rostered = roster_hours(cell["shift"])
+            item = {
+                "id": r["id"], "name": r["display_name"], "day": day,
+                "label": started.strftime("%a %d %b") if started else "",
+                "start": started.strftime("%H:%M") if started else "—",
+                "end": ended.strftime("%H:%M") if ended else None,
+                "hours": secs / 3600.0,
+                "rostered": rostered,
+                "auto_closed": bool(r["auto_closed"]),
+                "open": ended is None,
+            }
+            shifts.append(item)
+            totals[item["name"]] = totals.get(item["name"], 0.0) + item["hours"]
+            if item["open"]:
+                open_now.append(item)
+        totals = sorted(({"name": k, "hours": v} for k, v in totals.items()),
+                        key=lambda x: -x["hours"])
+        return render_template("shifts.html", shifts=shifts, totals=totals,
+                               open_now=open_now, d_from=d_from, d_to=d_to)
 
     @app.route("/api/schedule-ack", methods=["POST"])
     def api_schedule_ack():
