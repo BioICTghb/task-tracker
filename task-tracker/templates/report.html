@@ -92,7 +92,17 @@
     {% endfor %}
   </tbody>
 </table>
+{% endif %}
 
+{# Shifts worked in the range: its own section, ahead of the photos. #}
+{% if shift_data.shifts %}
+<div class="mb-4">
+  <h2 class="h5 mb-3 mt-4">Shifts worked — {{ span }}</h2>
+  {% with shifts=shift_data.shifts, totals=shift_data.totals %}{% include "_shift_table.html" %}{% endwith %}
+</div>
+{% endif %}
+
+{% if tasks %}
 <!-- Completed jobs' photos: hidden on screen (use the Photos button), printed
      one page per job. Only when something has a photo, to avoid a blank page. -->
 {% set any_photos = tasks|selectattr('before_path')|first or tasks|selectattr('after_path')|first or tasks|selectattr('progress')|first %}

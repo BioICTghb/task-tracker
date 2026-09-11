@@ -107,6 +107,11 @@ def schedule_shift_label(hex_color):
 # it is the backstop for an operator who forgets to clock out.
 SHIFT_MAX_HOURS = 12.0
 
+# A daily belongs to its *working* day, and night shifts run past midnight. Until
+# this hour the next morning, yesterday's started dailies stay live - still in the
+# operator's list and untouched by the sweep - so a night worker can finish them.
+DAILY_GRACE_HOUR = 12
+
 # Roster cell texts that mean a shift without stating its length.
 SHIFT_NAMED_HOURS = {"DRIVE": 7.6, "DRIJFVEER": 7.6}
 
@@ -198,6 +203,15 @@ def now_local():
 
 def today_local():
     return now_local().strftime("%Y-%m-%d")
+
+
+def daily_grace_day():
+    """The day whose *started* daily instances are still live alongside today's:
+    yesterday until DAILY_GRACE_HOUR, then today (so nothing extra)."""
+    now = now_local()
+    if now.hour < DAILY_GRACE_HOUR:
+        return (now.date() - timedelta(days=1)).isoformat()
+    return now.date().isoformat()
 
 
 def split_daily_prefix(line):
@@ -759,22 +773,53 @@ def create_app():
         return timedelta(hours=min(hours or SHIFT_MAX_HOURS, SHIFT_MAX_HOURS))
 
     def auto_close_stale_shifts():
-        """Close shifts whose rostered hours have run out. Someone who forgets to
-        clock out is clocked out for them, at the end of the hours they were
-        rostered for — never at 'now', which would invent time they didn't work.
-        Marked auto_closed=1 so a real clock-out stays distinguishable."""
+        """Close shifts that were plainly forgotten.
+
+        A shift only counts as abandoned once SHIFT_MAX_HOURS have passed. Rostered
+        hours are *paid* hours and people work past them - a break, an early start,
+        overtime - so closing at the rostered length cut operators off while they
+        were still on the floor. When a forgotten shift is closed, its end is
+        recorded at the rostered length: the best guess of when they stopped, never
+        'now', which would invent hours. auto_closed=1 marks it as a guess, and a
+        real clock-out that turns up later still corrects it (api_shift_punch)."""
         now = now_local()
+        cap = timedelta(hours=SHIFT_MAX_HOURS)
         for s in db.query(
             "SELECT s.id, s.started_at, u.display_name FROM shifts s "
             "JOIN users u ON u.id = s.user_id WHERE s.ended_at IS NULL"
         ):
             started = _as_dt(s["started_at"])
-            if not started:
+            if not started or now < started + cap:
                 continue
             end = started + shift_allowance(s["display_name"], started)
-            if now >= end:
-                db.execute("UPDATE shifts SET ended_at=%s, auto_closed=1 WHERE id=%s",
-                           (_fmt(end), s["id"]))
+            db.execute("UPDATE shifts SET ended_at=%s, auto_closed=1 WHERE id=%s",
+                       (_fmt(end), s["id"]))
+
+    def reopen_shifts_closed_early():
+        """Repair shifts the old rule closed at the rostered length while the
+        operator was still working. Only shifts still inside their 12 h window, with
+        no later shift for that person, are reopened; the corrected sweep closes
+        them properly if they are then forgotten. Nothing the current rule closes
+        can match - it only closes once the 12 h window has passed - so this is
+        safe on every start and does nothing once old records age out."""
+        now = now_local()
+        cap = timedelta(hours=SHIFT_MAX_HOURS)
+        with app.app_context():
+            for s in db.query(
+                "SELECT id, user_id, started_at FROM shifts "
+                "WHERE auto_closed=1 AND ended_at IS NOT NULL AND started_at >= %s",
+                (_fmt(now - cap),),
+            ):
+                started = _as_dt(s["started_at"])
+                if not started or now >= started + cap:
+                    continue
+                if db.query("SELECT 1 FROM shifts WHERE user_id=%s AND id>%s",
+                            (s["user_id"], s["id"]), one=True):
+                    continue            # they already clocked in again - leave it
+                db.execute("UPDATE shifts SET ended_at=NULL, auto_closed=0 WHERE id=%s",
+                           (s["id"],))
+
+    reopen_shifts_closed_early()
 
     def current_shift(uid):
         return db.query(
@@ -836,69 +881,98 @@ def create_app():
                 (uid, _fmt(when), key),
             )
         else:
-            if not open_shift:
-                return jsonify(dict(shift_state(uid), already=True))
-            started = _as_dt(open_shift["started_at"])
-            # Never end before the start, and never beyond the rostered allowance:
-            # a punch that synced late must not stretch the shift past its cap.
+            cap = timedelta(hours=SHIFT_MAX_HOURS)
+            target = open_shift
+            if not target:
+                # The sweep may already have closed this shift with a guessed end -
+                # a forgotten clock-out, or a clock-out queued offline that synced
+                # late. A real clock-out inside that shift's 12 h window is better
+                # information than the guess, so it corrects the record.
+                last = db.query(
+                    "SELECT id, started_at FROM shifts WHERE user_id=%s AND auto_closed=1 "
+                    "ORDER BY id DESC", (uid,), one=True)
+                s0 = _as_dt(last["started_at"]) if last else None
+                newer = last and db.query(
+                    "SELECT 1 FROM shifts WHERE user_id=%s AND id>%s",
+                    (uid, last["id"]), one=True)
+                if not (s0 and not newer and s0 <= when <= s0 + cap):
+                    return jsonify(dict(shift_state(uid), already=True))
+                target = last
+            started = _as_dt(target["started_at"])
+            # Never end before the start, and never past SHIFT_MAX_HOURS - the ceiling
+            # on any shift. Rostered hours are NOT a cap on the time actually worked.
             end = when
             if started:
                 end = max(end, started)
-                end = min(end, started + shift_allowance(user.get("name"), started))
-            db.execute("UPDATE shifts SET ended_at=%s, client_key=COALESCE(client_key,%s) "
-                       "WHERE id=%s", (_fmt(end), key, open_shift["id"]))
+                end = min(end, started + cap)
+            db.execute("UPDATE shifts SET ended_at=%s, auto_closed=0, "
+                       "client_key=COALESCE(client_key,%s) WHERE id=%s",
+                       (_fmt(end), key, target["id"]))
         return jsonify(shift_state(uid))
 
-    @app.route("/shifts")
-    @manager_required
-    def shifts_page():
-        """Who is clocked in now, and the shifts worked over a date range.
-
-        Rows are keyed on the day the shift *started*, so a night shift running
-        past midnight stays with the day it belongs to rather than splitting."""
+    def shift_rows(d_from, d_to):
+        """Shifts started within the range - hours, rostered hours, flags - plus
+        hours per operator and who is on shift right now. Shared by the Shifts page
+        and the report. Rows are keyed on the day a shift *started*, so a night
+        shift stays with the day it belongs to rather than splitting at midnight."""
         auto_close_stale_shifts()
-        d_from, d_to = parse_range()
-        rows = db.query(
-            "SELECT s.id, s.started_at, s.ended_at, s.auto_closed, u.display_name "
-            "FROM shifts s JOIN users u ON u.id = s.user_id "
-            "WHERE DATE(s.started_at) BETWEEN %s AND %s "
-            "ORDER BY s.started_at DESC, u.display_name",
-            (d_from, d_to),
-        )
         now = now_local()
-        shifts, totals, open_now = [], {}, []
-        for r in rows:
+
+        def item(r):
             started = _as_dt(r["started_at"])
             ended = _as_dt(r["ended_at"]) if r["ended_at"] else None
             secs = int(((ended or now) - started).total_seconds()) if started else 0
             day = started.strftime("%Y-%m-%d") if started else ""
             rostered = None
-            if started:
-                col = _operator_col_for(r["display_name"])
-                if col:
-                    cell = db.query(
-                        "SELECT shift FROM schedule_cells WHERE col_index=%s AND work_date=%s",
-                        (col, day), one=True)
-                    if cell:
-                        rostered = roster_hours(cell["shift"])
-            item = {
+            col = _operator_col_for(r["display_name"]) if started else None
+            if col:
+                cell = db.query(
+                    "SELECT shift FROM schedule_cells WHERE col_index=%s AND work_date=%s",
+                    (col, day), one=True)
+                if cell:
+                    rostered = roster_hours(cell["shift"])
+            end = None
+            if ended:
+                # A night shift ends the next day; say so rather than show an end
+                # time that looks earlier than its start.
+                end = ended.strftime("%H:%M") + (" +1" if started and ended.date() > started.date() else "")
+            return {
                 "id": r["id"], "name": r["display_name"], "day": day,
                 "label": started.strftime("%a %d %b") if started else "",
                 "start": started.strftime("%H:%M") if started else "—",
-                "end": ended.strftime("%H:%M") if ended else None,
+                "end": end,
                 "hours": secs / 3600.0,
                 "rostered": rostered,
                 "auto_closed": bool(r["auto_closed"]),
                 "open": ended is None,
             }
-            shifts.append(item)
-            totals[item["name"]] = totals.get(item["name"], 0.0) + item["hours"]
-            if item["open"]:
-                open_now.append(item)
-        totals = sorted(({"name": k, "hours": v} for k, v in totals.items()),
-                        key=lambda x: -x["hours"])
-        return render_template("shifts.html", shifts=shifts, totals=totals,
-                               open_now=open_now, d_from=d_from, d_to=d_to)
+
+        select = ("SELECT s.id, s.started_at, s.ended_at, s.auto_closed, u.display_name "
+                  "FROM shifts s JOIN users u ON u.id = s.user_id ")
+        shifts = [item(r) for r in db.query(
+            select + "WHERE DATE(s.started_at) BETWEEN %s AND %s "
+            "ORDER BY s.started_at DESC, u.display_name", (d_from, d_to))]
+        totals = {}
+        for s in shifts:
+            totals[s["name"]] = totals.get(s["name"], 0.0) + s["hours"]
+        # Who is on shift *now* is live state, independent of the dates being
+        # viewed - a night shift that began yesterday is still on the floor today.
+        open_now = [item(r) for r in db.query(
+            select + "WHERE s.ended_at IS NULL ORDER BY s.started_at")]
+        return {
+            "shifts": shifts,
+            "totals": sorted(({"name": k, "hours": v} for k, v in totals.items()),
+                             key=lambda x: -x["hours"]),
+            "open_now": open_now,
+        }
+
+    @app.route("/shifts")
+    @manager_required
+    def shifts_page():
+        """Who is clocked in now, and the shifts worked over a date range."""
+        d_from, d_to = parse_range()
+        return render_template("shifts.html", d_from=d_from, d_to=d_to,
+                               **shift_rows(d_from, d_to))
 
     @app.route("/api/schedule-ack", methods=["POST"])
     def api_schedule_ack():
@@ -924,9 +998,11 @@ def create_app():
             where = "WHERE is_daily=1 "            # the recurring 'master' templates
         else:
             # Normal view: hide daily masters, and hide daily instances once their
-            # day has passed (only today's remain) so they don't accumulate.
-            where = "WHERE is_daily=0 AND (daily_of IS NULL OR DATE(created_at)=%s) "
-            params = (today_local(),)
+            # working day has passed so they don't accumulate. Yesterday's *started*
+            # ones stay until DAILY_GRACE_HOUR - a night shift is still on them.
+            where = ("WHERE is_daily=0 AND (daily_of IS NULL OR DATE(created_at)=%s "
+                     "OR (status='started' AND DATE(created_at)=%s)) ")
+            params = (today_local(), daily_grace_day())
         # Search box: match the description, or an exact task id when digits are
         # typed (so "421" finds #421). Ignores the daily-instance date prefix.
         q = (request.args.get("q") or "").strip()
@@ -1238,6 +1314,7 @@ def create_app():
                                started=fetch_started(d_from, d_to),
                                summary=report_summary(d_from, d_to),
                                shift_summary=todays_shift_summary(),
+                               shift_data=shift_rows(d_from, d_to),
                                d_from=d_from, d_to=d_to)
 
     @app.route("/photos")
@@ -1306,12 +1383,16 @@ def create_app():
             documentation is never removed by an automatic sweep.
 
         On-hold tasks are skipped either way — a hold is a deliberate decision by
-        a manager and the sweep has no business overriding it."""
-        today = today_local()
+        a manager and the sweep has no business overriding it.
+
+        "Its day has passed" means the *working* day: yesterday's instances are left
+        alone until DAILY_GRACE_HOUR, because a night shift started yesterday is
+        still working them after midnight."""
+        grace = daily_grace_day()
         for r in db.query(
             "SELECT id, created_at, started_at, started_by FROM tasks "
             "WHERE daily_of IS NOT NULL AND status='started' AND on_hold=0 "
-            "AND DATE(created_at) < %s", (today,)
+            "AND DATE(created_at) < %s", (grace,)
         ):
             day = str(r["created_at"])[:10] if not hasattr(r["created_at"], "strftime") \
                 else r["created_at"].strftime("%Y-%m-%d")
@@ -1327,7 +1408,7 @@ def create_app():
             )
         for r in db.query(
             "SELECT id FROM tasks WHERE daily_of IS NOT NULL AND status='open' "
-            "AND on_hold=0 AND DATE(created_at) < %s", (today,)
+            "AND on_hold=0 AND DATE(created_at) < %s", (grace,)
         ):
             if db.query("SELECT 1 FROM task_photos WHERE task_id=%s", (r["id"],), one=True):
                 continue                        # has photos - never auto-delete those
@@ -1373,10 +1454,11 @@ def create_app():
             FROM tasks
             WHERE (status <> 'completed' OR DATE(completed_at) = %s)
               AND is_daily = 0
-              AND (daily_of IS NULL OR DATE(created_at) = %s)
+              AND (daily_of IS NULL OR DATE(created_at) = %s
+                   OR (status = 'started' AND DATE(created_at) = %s))
             ORDER BY {hold_sql}, {status_sql}, id DESC
             """,
-            (today, today),
+            (today, today, daily_grace_day()),
         )
         # Float the viewer's own jobs to the top, on-hold still last. Done here and
         # not in SQL because a job can be shared by several operators ("A, B"),

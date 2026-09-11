@@ -1,0 +1,43 @@
+{# Hours per operator + one row per shift. Shared by the Shifts page and the report.
+   Expects `shifts`, `totals` and `span`. #}
+<div class="mb-3">
+  <div class="fw-semibold small mb-2">Hours per operator — {{ span }}</div>
+  <div class="d-flex flex-wrap gap-2">
+    {% for t in totals %}
+    <span class="badge text-bg-light border">{{ t.name }} — <strong>{{ "%.2f"|format(t.hours) }} h</strong></span>
+    {% endfor %}
+  </div>
+</div>
+
+<table class="table table-bordered align-middle">
+  <thead class="table-light">
+    <tr>
+      <th>Operator</th><th>Day</th><th>Start</th><th>End</th>
+      <th>Hours</th><th>Rostered</th><th>Note</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for s in shifts %}
+    <tr>
+      <td>{{ s.name }}</td>
+      <td>{{ s.label }}</td>
+      <td>{{ s.start }}</td>
+      <td>{{ s.end or "—" }}</td>
+      <td>{{ "%.2f"|format(s.hours) }}</td>
+      <td>{{ "%.2f"|format(s.rostered) if s.rostered is not none else "—" }}</td>
+      <td>
+        {%- if s.open %}<span class="badge text-bg-success">ON SHIFT</span>
+        {%- elif s.auto_closed %}<span class="badge text-bg-warning">AUTO CLOSED</span>
+        {%- endif -%}
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+<p class="text-muted small">
+  <strong>Rostered</strong> is what that day's roster cell was worth, to compare with the hours
+  actually clocked. <strong>+1</strong> means the shift ended the next day. <strong>Auto closed</strong>
+  means the operator never clocked out: after 12 hours the system closed the shift and guessed its end
+  from the rostered hours, so treat those times as approximate.
+</p>

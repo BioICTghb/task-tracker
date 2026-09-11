@@ -20,7 +20,7 @@ hosting is retired. Deploy path on the VM: `/home/sebastien/task-tracker/task-tr
   `<clone>/task-tracker/app.py`, etc.).
 - Remote: `github.com/BioICTghb/task-tracker`, branch `main`. Commit author:
   `sebastien.poncelet@biopower.be`; end commit messages with
-  `Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>`.
+  `Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>`.
 
 ## Working on it (any PC)
 1. Edit code in `task-tracker/` in your clone.
@@ -68,6 +68,9 @@ not affect the live site.
   `auto_closed=1`; a *never-started* one is deleted, guarded on having no photos.
   On-hold instances are skipped — a hold is a manager's decision. `auto_closed` is
   deliberately invisible in the UI: these count as ordinary completions.
+  The day boundary is the **working** day, not midnight: night shifts run past 00:00, so
+  yesterday's *started* dailies stay in the operator and edit lists and are left alone
+  by the sweep until `DAILY_GRACE_HOUR` (12:00) — see `daily_grace_day()`.
 - **Extra** (`is_extra`, cyan) / **Rent** (`is_rent`, blue; button gated to `RENT_USERNAMES`)
   are operator-created jobs. **On-hold** hides/blocks tasks for operators. **Report** is
   keyed on completion date, has an in-progress page with photo cards, and a status pie.
@@ -82,7 +85,10 @@ not affect the live site.
 - **Shifts page** (`/shifts`, manager-level): who is clocked in right now, shifts in a
   date range keyed on the day the shift *started* (so a night shift stays on its own
   day), hours per operator, and the rostered hours beside the worked ones. Auto-closed
-  shifts are badged so those times are read as approximate.
+  shifts are badged so those times are read as approximate. "On shift right now" is
+  queried separately from the date range — a night shift begun yesterday is still on
+  the floor today. `shift_rows()` feeds both this page and the report's **Shifts worked**
+  section (shared partial `_shift_table.html`, placed ahead of the photos).
 - **@-mention** (`manager.html` publish box): typing `@` opens an operator autocomplete
   anchored at the caret (a hidden mirror `div` computes the `@`'s pixel position — textareas
   expose no caret coords). Filters as you type; ↑/↓ navigate, Tab/Enter or click select,
@@ -105,11 +111,15 @@ not affect the live site.
   explicit `action` (`start`/`end`), never a toggle, plus the phone's tap `timestamp` and
   a `client_key` so a punch replayed from the offline queue can't create a second shift.
   Punches ride the **photo outbox** (`kind:"shift"`, drained in order by `sync.js`), so
-  clocking in with no signal records the tap time. **Auto clock-out**: `roster_hours()`
-  reads that day's roster cell (`7,6` / `11,6` / `DRIVE` = 7.6; anything else is holiday
-  = no shift), capped by `SHIFT_MAX_HOURS` (12) and used as the fallback too; a forgotten
-  clock-out is closed at `started_at + allowance` (never at 'now' — that would invent
-  hours) and flagged `auto_closed=1`. Swept lazily from the shift endpoints, no cron.
+  clocking in with no signal records the tap time. **Auto clock-out**: a shift only
+  counts as forgotten once `SHIFT_MAX_HOURS` (12) have passed — rostered hours are *paid*
+  hours and people work past them, so they must never be a cutoff (that closed Tomasz
+  at 13:26 while he was still working). When a forgotten shift is closed, its end is
+  *guessed* from `roster_hours()` (`7,6` / `11,6` / `DRIVE` = 7.6; anything else = 12 h)
+  and flagged `auto_closed=1`; a real clock-out inside the 12 h window — including one
+  that synced late — overwrites the guess. Real clock-outs are capped at 12 h, not at
+  the roster. `reopen_shifts_closed_early()` repairs old-rule records on startup.
+  Swept lazily from the shift endpoints, no cron.
 - **Schedule week** is **Mon–Sun** (`SCHEDULE_ROWS = 7`); everything derives from that
   constant, including the grid rows, `/api/my-schedule`, and the save validation, so
   don't hard-code 5 or 7 anywhere. Weeks saved before weekends existed simply have no
