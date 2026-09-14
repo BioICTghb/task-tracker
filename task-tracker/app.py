@@ -107,6 +107,12 @@ def schedule_shift_label(hex_color):
 # it is the backstop for an operator who forgets to clock out.
 SHIFT_MAX_HOURS = 12.0
 
+# How long after clock-in a clock-out is still accepted before the shift is treated
+# as forgotten. Longer than SHIFT_MAX_HOURS on purpose: a night shift plus handover
+# runs past 12 h door to door, and those operators must still be able to clock out
+# (the recorded length is then capped at SHIFT_MAX_HOURS).
+SHIFT_CLOCKOUT_WINDOW_HOURS = 16.0
+
 # A daily belongs to its *working* day, and night shifts run past midnight. Until
 # this hour the next morning, yesterday's started dailies stay live - still in the
 # operator's list and untouched by the sweep - so a night worker can finish them.
@@ -775,7 +781,8 @@ def create_app():
     def auto_close_stale_shifts():
         """Close shifts that were plainly forgotten.
 
-        A shift only counts as abandoned once SHIFT_MAX_HOURS have passed. Rostered
+        A shift only counts as abandoned once SHIFT_CLOCKOUT_WINDOW_HOURS have
+        passed (not SHIFT_MAX_HOURS: a night plus handover runs past 12 h). Rostered
         hours are *paid* hours and people work past them - a break, an early start,
         overtime - so closing at the rostered length cut operators off while they
         were still on the floor. When a forgotten shift is closed, its end is
@@ -783,13 +790,13 @@ def create_app():
         'now', which would invent hours. auto_closed=1 marks it as a guess, and a
         real clock-out that turns up later still corrects it (api_shift_punch)."""
         now = now_local()
-        cap = timedelta(hours=SHIFT_MAX_HOURS)
+        window = timedelta(hours=SHIFT_CLOCKOUT_WINDOW_HOURS)
         for s in db.query(
             "SELECT s.id, s.started_at, u.display_name FROM shifts s "
             "JOIN users u ON u.id = s.user_id WHERE s.ended_at IS NULL"
         ):
             started = _as_dt(s["started_at"])
-            if not started or now < started + cap:
+            if not started or now < started + window:
                 continue
             end = started + shift_allowance(s["display_name"], started)
             db.execute("UPDATE shifts SET ended_at=%s, auto_closed=1 WHERE id=%s",
@@ -803,15 +810,15 @@ def create_app():
         can match - it only closes once the 12 h window has passed - so this is
         safe on every start and does nothing once old records age out."""
         now = now_local()
-        cap = timedelta(hours=SHIFT_MAX_HOURS)
+        window = timedelta(hours=SHIFT_CLOCKOUT_WINDOW_HOURS)
         with app.app_context():
             for s in db.query(
                 "SELECT id, user_id, started_at FROM shifts "
                 "WHERE auto_closed=1 AND ended_at IS NOT NULL AND started_at >= %s",
-                (_fmt(now - cap),),
+                (_fmt(now - window),),
             ):
                 started = _as_dt(s["started_at"])
-                if not started or now >= started + cap:
+                if not started or now >= started + window:
                     continue
                 if db.query("SELECT 1 FROM shifts WHERE user_id=%s AND id>%s",
                             (s["user_id"], s["id"]), one=True):
@@ -882,6 +889,7 @@ def create_app():
             )
         else:
             cap = timedelta(hours=SHIFT_MAX_HOURS)
+            window = timedelta(hours=SHIFT_CLOCKOUT_WINDOW_HOURS)
             target = open_shift
             if not target:
                 # The sweep may already have closed this shift with a guessed end -
@@ -895,7 +903,7 @@ def create_app():
                 newer = last and db.query(
                     "SELECT 1 FROM shifts WHERE user_id=%s AND id>%s",
                     (uid, last["id"]), one=True)
-                if not (s0 and not newer and s0 <= when <= s0 + cap):
+                if not (s0 and not newer and s0 <= when <= s0 + window):
                     return jsonify(dict(shift_state(uid), already=True))
                 target = last
             started = _as_dt(target["started_at"])

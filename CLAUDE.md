@@ -112,7 +112,10 @@ not affect the live site.
   a `client_key` so a punch replayed from the offline queue can't create a second shift.
   Punches ride the **photo outbox** (`kind:"shift"`, drained in order by `sync.js`), so
   clocking in with no signal records the tap time. **Auto clock-out**: a shift only
-  counts as forgotten once `SHIFT_MAX_HOURS` (12) have passed — rostered hours are *paid*
+  counts as forgotten once `SHIFT_CLOCKOUT_WINDOW_HOURS` (16) have passed — not 12: a
+  night plus handover runs past 12 h door to door, and a 12 h trigger rejected those
+  operators' clock-outs. `SHIFT_MAX_HOURS` (12) is only the cap on the *recorded* length.
+  Rostered hours are *paid*
   hours and people work past them, so they must never be a cutoff (that closed Tomasz
   at 13:26 while he was still working). When a forgotten shift is closed, its end is
   *guessed* from `roster_hours()` (`7,6` / `11,6` / `DRIVE` = 7.6; anything else = 12 h)
