@@ -76,6 +76,24 @@ def _sqlite_init_schema(conn):
     )
     conn.execute(
         """
+        CREATE TABLE IF NOT EXISTS schedule_columns (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          -- Matches schedule_cells.col_index. Never renumber: the stored cells are
+          -- keyed on it, so changing a position would scramble the history.
+          position INTEGER NOT NULL UNIQUE,
+          -- Header shown in the grid. Free text, so a column kept for someone who
+          -- has left keeps their name.
+          label TEXT NOT NULL,
+          -- The operator account this column pushes shifts to. NULL = pushes to
+          -- nobody (a former colleague's column, or one not linked yet).
+          user_id INTEGER,
+          -- Kept for the book year but greyed out; hidden once retired and cleared.
+          retired INTEGER NOT NULL DEFAULT 0
+        );
+        """
+    )
+    conn.execute(
+        """
         CREATE TABLE IF NOT EXISTS schedule_cells (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
           work_date TEXT NOT NULL,

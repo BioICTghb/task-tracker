@@ -11,11 +11,76 @@
   </div>
 </div>
 
+{% if msg %}<div class="alert alert-info py-2">{{ msg }}</div>{% endif %}
+
 <p class="text-muted small">
   Click the top-left cell of a range then paste (Ctrl+V) directly from Excel — text and cell
   colors are copied across and down automatically. Click a cell and use a swatch below to
   color it by hand. Each week saves separately.
+  A column marked <span class="text-muted">*</span> isn't linked to an operator account, so
+  its shifts reach nobody.
 </p>
+
+{# The columns ARE the roster: a column linked to an account is what pushes shifts
+   into that operator's app. Order must match your spreadsheet left to right. #}
+<details class="mb-4">
+  <summary class="fw-semibold small">Columns — who each one belongs to ({{ columns|length }})</summary>
+  <div class="table-responsive mt-2">
+    <table class="table table-sm align-middle">
+      <thead class="table-light">
+        <tr><th>#</th><th>Name in the grid</th><th>Sends shifts to</th><th>Retired</th><th></th></tr>
+      </thead>
+      <tbody>
+        {# A <form> cannot wrap <td>s - the browser hoists it out of the table - so
+           each row's fields point at a form rendered after the table. #}
+        {% for c in columns %}
+        <tr>
+          <td class="text-muted">{{ c.position }}</td>
+          <td><input form="col-{{ c.id }}" name="label" value="{{ c.label }}" class="form-control form-control-sm" style="min-width:12rem"></td>
+          <td>
+            <select form="col-{{ c.id }}" name="user_id" class="form-select form-select-sm" style="min-width:12rem">
+              <option value="">— nobody (former colleague / not linked) —</option>
+              {% for u in operator_accounts %}
+              <option value="{{ u.id }}" {{ 'selected' if c.user_id == u.id }}>{{ u.display_name }}</option>
+              {% endfor %}
+            </select>
+          </td>
+          <td class="text-center">
+            <input form="col-{{ c.id }}" type="checkbox" name="retired" value="1" class="form-check-input" {{ 'checked' if c.retired }}>
+          </td>
+          <td class="text-end text-nowrap">
+            <button form="col-{{ c.id }}" class="btn btn-outline-secondary btn-sm">Save</button>
+            {% if loop.last %}
+            <button form="col-{{ c.id }}" formaction="/schedule/columns/{{ c.id }}/delete" formnovalidate
+                    class="btn btn-outline-danger btn-sm"
+                    onclick="return confirm('Remove the column {{ c.label }} and every shift stored under it? This cannot be undone.')">
+              Remove
+            </button>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% for c in columns %}<form id="col-{{ c.id }}" method="post" action="/schedule/columns/{{ c.id }}"></form>{% endfor %}
+  </div>
+  <form method="post" action="/schedule/columns" class="d-flex flex-wrap gap-2 align-items-end">
+    <div>
+      <label class="form-label small mb-0">Add a column (goes on the far right)</label>
+      <input name="label" class="form-control form-control-sm" placeholder="e.g. Michel Lemmens" required>
+    </div>
+    <select name="user_id" class="form-select form-select-sm" style="width:auto">
+      <option value="">— link later —</option>
+      {% for u in operator_accounts %}<option value="{{ u.id }}">{{ u.display_name }}</option>{% endfor %}
+    </select>
+    <button class="btn btn-primary btn-sm">Add column</button>
+  </form>
+  <p class="text-muted small mt-2 mb-0">
+    Columns are never renumbered and only the last one can be removed — the stored shifts are
+    keyed on column number, so shuffling them would hand people each other's history. To take
+    someone off the roster for now, tick <strong>Retired</strong>: the column and its history stay.
+  </p>
+</details>
 
 {% for week in weeks %}
 <div class="mb-4" data-week-block>
@@ -32,8 +97,11 @@
       <thead class="table-light">
         <tr>
           <th style="min-width:110px;">Day</th>
-          {% for op in operators %}
-          <th style="min-width:110px;">{{ op }}</th>
+          {% for c in columns %}
+          <th style="min-width:110px;" class="{{ 'text-muted fst-italic' if c.retired }}"
+              title="{% if c.user_id %}shifts go to this operator's app{% else %}not linked to an account - pushes to nobody{% endif %}">
+            {{ c.label }}{% if not c.user_id %} <span class="text-muted">*</span>{% endif %}
+          </th>
           {% endfor %}
         </tr>
       </thead>
@@ -61,7 +129,7 @@
 {% block page_script %}
 <script>
 (function () {
-  const nCols = {{ operators|length }};
+  const nCols = {{ columns|length }};
   const nRows = {{ (weeks[0].table|length) if weeks else 5 }};
   let activeCell = null;
 

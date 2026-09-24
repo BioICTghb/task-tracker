@@ -565,6 +565,7 @@ def create_app():
             grid[(wd, r["col_index"])] = {"text": r["shift"], "color": r["color"] or ""}
         empty = {"text": "", "color": ""}
 
+        cols = column_rows()
         weeks = []
         for wstart in week_starts:
             dates = [wstart + timedelta(days=i) for i in range(SCHEDULE_ROWS)]
@@ -572,7 +573,7 @@ def create_app():
                 {
                     "date": d.isoformat(),
                     "label": d.strftime("%a %d %b"),
-                    "cells": [grid.get((d.isoformat(), c + 1), empty) for c in range(len(SCHEDULE_OPERATORS))],
+                    "cells": [grid.get((d.isoformat(), c["position"]), empty) for c in cols],
                 }
                 for d in dates
             ]
@@ -581,35 +582,130 @@ def create_app():
         prev_month = (year - 1, 12) if month == 1 else (year, month - 1)
         next_month = (year + 1, 1) if month == 12 else (year, month + 1)
         return render_template(
-            "schedule.html", operators=SCHEDULE_OPERATORS, weeks=weeks,
+            "schedule.html", columns=cols, weeks=weeks,
+            operator_accounts=db.query(
+                "SELECT id, display_name FROM users WHERE role='technician' AND active=1 "
+                "ORDER BY display_name"),
             month_label=first.strftime("%B %Y"),
             prev_month="%04d-%02d" % prev_month,
             next_month="%04d-%02d" % next_month,
+            msg=request.args.get("msg"),
         )
 
-    def _operator_col_for(display_name):
-        """Match a logged-in user's display name to a Schedule column, so an
-        operator can see their own shifts. Tolerant of abbreviated last names
-        (e.g. account "Sebastian R" vs roster "Sebastian Rek", matching the
-        first_l initial-only convention already used for usernames like
-        taras_d/ivan_d). None if they're not on the roster."""
-        dn_tokens = (display_name or "").strip().lower().split()
-        if not dn_tokens:
+    def _form_uid():
+        """The operator account picked in a column form, or None for 'nobody'."""
+        raw = (request.form.get("user_id") or "").strip()
+        return int(raw) if raw.isdigit() else None
+
+    @app.route("/schedule/columns", methods=["POST"])
+    @manager_required
+    def schedule_add_column():
+        """Add a column at the end. Never in the middle: positions are what the
+        stored cells are keyed on, so inserting one would shift everybody's
+        history sideways - the very bug this replaced."""
+        label = (request.form.get("label") or "").strip()[:64]
+        if not label:
+            return redirect(url_for("schedule", msg="A column needs a name."))
+        nxt = db.query("SELECT COALESCE(MAX(position), 0) + 1 AS p FROM schedule_columns",
+                       one=True)["p"]
+        db.execute("INSERT INTO schedule_columns (position, label, user_id) VALUES (%s, %s, %s)",
+                   (nxt, label, _form_uid()))
+        return redirect(url_for("schedule", msg="Added column %d: %s." % (nxt, label)))
+
+    @app.route("/schedule/columns/<int:cid>", methods=["POST"])
+    @manager_required
+    def schedule_update_column(cid):
+        """Rename a column, point it at a different operator, or retire it."""
+        col = db.query("SELECT position, label FROM schedule_columns WHERE id=%s", (cid,), one=True)
+        if not col:
+            abort(404)
+        label = (request.form.get("label") or "").strip()[:64] or col["label"]
+        uid = _form_uid()
+        retired = 1 if request.form.get("retired") else 0
+        if uid:
+            # One account per column: two columns feeding the same person would make
+            # "whose shift is this?" ambiguous.
+            db.execute("UPDATE schedule_columns SET user_id=NULL WHERE user_id=%s AND id<>%s",
+                       (uid, cid))
+        db.execute("UPDATE schedule_columns SET label=%s, user_id=%s, retired=%s WHERE id=%s",
+                   (label, uid, retired, cid))
+        return redirect(url_for("schedule", msg="Saved column %d." % col["position"]))
+
+    @app.route("/schedule/columns/<int:cid>/delete", methods=["POST"])
+    @manager_required
+    def schedule_delete_column(cid):
+        """Remove a column and the shifts stored under it. Only the last column can
+        go: deleting one from the middle would leave every column after it pointing
+        at the wrong person's history."""
+        col = db.query("SELECT position, label FROM schedule_columns WHERE id=%s", (cid,), one=True)
+        if not col:
+            abort(404)
+        last = db.query("SELECT MAX(position) AS p FROM schedule_columns", one=True)["p"]
+        if col["position"] != last:
+            return redirect(url_for("schedule", msg=(
+                "Only the last column can be removed, otherwise the columns after it "
+                "would inherit the wrong history. Retire it instead.")))
+        db.execute("DELETE FROM schedule_cells WHERE col_index=%s", (col["position"],))
+        db.execute("DELETE FROM schedule_columns WHERE id=%s", (cid,))
+        return redirect(url_for("schedule", msg="Removed column %s." % col["label"]))
+
+    def column_rows(include_retired=True):
+        """The schedule's columns, left to right. The single source of truth for
+        the grid: which columns exist, what they're called, and whose account each
+        one pushes shifts to."""
+        sql = "SELECT id, position, label, user_id, retired FROM schedule_columns"
+        if not include_retired:
+            sql += " WHERE retired=0"
+        return db.query(sql + " ORDER BY position")
+
+    def col_for_user(uid):
+        """The column an operator's shifts come from, by account — not by guessing
+        from their name. A person with no column simply has no roster."""
+        if not uid:
             return None
-        matches = []
-        for i, name in enumerate(SCHEDULE_OPERATORS, start=1):
-            name_tokens = name.strip().lower().split()
-            if not name_tokens or dn_tokens[0] != name_tokens[0]:
+        r = db.query("SELECT position FROM schedule_columns WHERE user_id=%s ORDER BY position",
+                     (uid,), one=True)
+        return r["position"] if r else None
+
+    def _legacy_roster_match(display_name, names):
+        """Name matching as it worked before columns were editable. Used *only* to
+        link accounts when seeding the columns table, never at runtime: guessing
+        from names is what let a staffing change hand one operator another's roster."""
+        dn = (display_name or "").strip().lower().split()
+        if not dn:
+            return None
+        hits = []
+        for i, name in enumerate(names, start=1):
+            nt = name.strip().lower().split()
+            if not nt or dn[0] != nt[0]:
                 continue
-            if len(dn_tokens) == 1:
-                matches.append(i)  # first-name-only; resolved below only if unique
+            if len(dn) == 1:
+                hits.append(i)
                 continue
-            dn_last, name_last = dn_tokens[-1], name_tokens[-1]
-            if dn_last == name_last or dn_last.startswith(name_last) or name_last.startswith(dn_last):
-                matches.append(i)
-        # Two roster entries can share a first name (e.g. two "Savrii"s) — only
-        # trust the match if it's unambiguous, otherwise don't guess.
-        return matches[0] if len(matches) == 1 else None
+            if dn[-1] == nt[-1] or dn[-1].startswith(nt[-1]) or nt[-1].startswith(dn[-1]):
+                hits.append(i)
+        return hits[0] if len(hits) == 1 else None
+
+    def seed_schedule_columns():
+        """First run after this change: turn the old hard-coded roster into real
+        rows, keeping each name at its existing position so stored cells still mean
+        what they meant, and linking accounts where the old matching was certain.
+        Anything it can't match is left unlinked for the manager to point at the
+        right person."""
+        with app.app_context():
+            if db.query("SELECT 1 FROM schedule_columns", one=True):
+                return
+            users = db.query("SELECT id, display_name FROM users WHERE role='technician'")
+            for i, name in enumerate(SCHEDULE_OPERATORS, start=1):
+                uid = None
+                for u in users:
+                    if _legacy_roster_match(u["display_name"], SCHEDULE_OPERATORS) == i:
+                        uid = u["id"]
+                        break
+                db.execute("INSERT INTO schedule_columns (position, label, user_id) "
+                           "VALUES (%s, %s, %s)", (i, name, uid))
+
+    seed_schedule_columns()
 
     @app.route("/api/my-schedule")
     def api_my_schedule():
@@ -619,7 +715,7 @@ def create_app():
         the technician's task list to show a small 'my schedule' widget with a
         prev/today/next week scroller."""
         user = current_user() or {}
-        col = _operator_col_for(user.get("name"))
+        col = col_for_user(user.get("id"))
         if not col:
             return jsonify({"days": [], "on_roster": False})
         try:
@@ -669,7 +765,7 @@ def create_app():
             return jsonify({"error": "invalid week_start"}), 400
         cells = data.get("cells")
         if not isinstance(cells, list) or len(cells) != SCHEDULE_ROWS or \
-           any(not isinstance(row, list) or len(row) != len(SCHEDULE_OPERATORS) for row in cells):
+           any(not isinstance(row, list) or len(row) != len(column_rows()) for row in cells):
             return jsonify({"error": "invalid cells"}), 400
 
         upsert_sql = (
@@ -693,14 +789,16 @@ def create_app():
         today_iso = now_local().date().isoformat()
         notified = []          # operators whose *upcoming* shifts changed
 
+        cols = column_rows()
         for i, row in enumerate(cells):
             d = week_isos[i]
             for c, cell in enumerate(row):
+                pos = cols[c]["position"]
                 cell = cell if isinstance(cell, dict) else {"text": cell, "color": ""}
                 text = (cell.get("text") or "").strip()[:64]
                 color = (cell.get("color") or "").strip()
                 color = color if _HEX_COLOR_RE.match(color) else ""
-                old = prev.get((d, c + 1))
+                old = prev.get((d, pos))
                 if old is None:
                     # New cell only counts as a change if it actually has a shift.
                     changed = text != ""
@@ -708,9 +806,10 @@ def create_app():
                 else:
                     changed = (old["shift"] or "") != text or (old["color"] or "") != color
                     keep = old["updated_at"]
-                db.execute(upsert_sql, (d, c + 1, text, color, now_iso if changed else keep))
-                if changed and d >= today_iso and c < len(SCHEDULE_OPERATORS):
-                    name = SCHEDULE_OPERATORS[c]
+                db.execute(upsert_sql, (d, pos, text, color, now_iso if changed else keep))
+                # Only a column linked to an account can notify anyone.
+                if changed and d >= today_iso and cols[c]["user_id"]:
+                    name = cols[c]["label"]
                     if name not in notified:
                         notified.append(name)
         # Tell the manager who will see a "your shift changed" notice, so saving
@@ -725,7 +824,7 @@ def create_app():
         schedule that already existed)."""
         user = current_user() or {}
         uid = user.get("id")
-        col = _operator_col_for(user.get("name"))
+        col = col_for_user(uid)
         if not uid or not col:
             return jsonify({"changes": [], "count": 0})
         row = db.query("SELECT schedule_seen_at FROM users WHERE id=%s", (uid,), one=True)
@@ -764,12 +863,12 @@ def create_app():
         except ValueError:
             return None
 
-    def shift_allowance(user_name, started):
+    def shift_allowance(uid, started):
         """How long this shift may run: the hours on that day's roster cell, capped
         by SHIFT_MAX_HOURS. Falls back to the cap when the day isn't a rostered
-        shift (holiday, or the operator isn't on the roster at all)."""
+        shift (holiday, or the operator has no schedule column at all)."""
         hours = None
-        col = _operator_col_for(user_name)
+        col = col_for_user(uid)
         if col:
             row = db.query(
                 "SELECT shift FROM schedule_cells WHERE col_index=%s AND work_date=%s",
@@ -792,13 +891,12 @@ def create_app():
         now = now_local()
         window = timedelta(hours=SHIFT_CLOCKOUT_WINDOW_HOURS)
         for s in db.query(
-            "SELECT s.id, s.started_at, u.display_name FROM shifts s "
-            "JOIN users u ON u.id = s.user_id WHERE s.ended_at IS NULL"
+            "SELECT id, started_at, user_id FROM shifts WHERE ended_at IS NULL"
         ):
             started = _as_dt(s["started_at"])
             if not started or now < started + window:
                 continue
-            end = started + shift_allowance(s["display_name"], started)
+            end = started + shift_allowance(s["user_id"], started)
             db.execute("UPDATE shifts SET ended_at=%s, auto_closed=1 WHERE id=%s",
                        (_fmt(end), s["id"]))
 
@@ -932,7 +1030,7 @@ def create_app():
             secs = int(((ended or now) - started).total_seconds()) if started else 0
             day = started.strftime("%Y-%m-%d") if started else ""
             rostered = None
-            col = _operator_col_for(r["display_name"]) if started else None
+            col = col_for_user(r["user_id"]) if started else None
             if col:
                 cell = db.query(
                     "SELECT shift FROM schedule_cells WHERE col_index=%s AND work_date=%s",
@@ -955,8 +1053,8 @@ def create_app():
                 "open": ended is None,
             }
 
-        select = ("SELECT s.id, s.started_at, s.ended_at, s.auto_closed, u.display_name "
-                  "FROM shifts s JOIN users u ON u.id = s.user_id ")
+        select = ("SELECT s.id, s.started_at, s.ended_at, s.auto_closed, s.user_id, "
+                  "u.display_name FROM shifts s JOIN users u ON u.id = s.user_id ")
         shifts = [item(r) for r in db.query(
             select + "WHERE DATE(s.started_at) BETWEEN %s AND %s "
             "ORDER BY s.started_at DESC, u.display_name", (d_from, d_to))]
@@ -1303,8 +1401,9 @@ def create_app():
         )
         by_col = {r["col_index"]: r for r in rows}
         out = []
-        for i, name in enumerate(SCHEDULE_OPERATORS, start=1):
-            r = by_col.get(i)  # col_index is 1-based
+        for c in column_rows(include_retired=False):
+            name = c["label"]
+            r = by_col.get(c["position"])
             if not r:
                 continue
             label = schedule_shift_label(r["color"])

@@ -123,6 +123,15 @@ not affect the live site.
   that synced late — overwrites the guess. Real clock-outs are capped at 12 h, not at
   the roster. `reopen_shifts_closed_early()` repairs old-rule records on startup.
   Swept lazily from the shift endpoints, no cron.
+- **Schedule columns** live in the DB (`schedule_columns`: `position`, `label`, `user_id`,
+  `retired`) and are edited by the manager on `/schedule`. `SCHEDULE_OPERATORS` is now only
+  the **seed** for the first run — never read it at runtime. A column pushes shifts to the
+  account in `user_id`; `col_for_user()` replaces the old name-guessing, which handed people
+  each other's roster whenever staffing changed and silently gave new joiners nothing.
+  **`position` is what `schedule_cells.col_index` means, so never renumber**: columns are
+  added at the end only, and only the last one can be deleted (with its cells). Take someone
+  off the roster with `retired` instead — the column and its history stay, greyed, and it
+  drops out of "who's on shift". One account per column (relinking clears the other).
 - **Schedule week** is **Mon–Sun** (`SCHEDULE_ROWS = 7`); everything derives from that
   constant, including the grid rows, `/api/my-schedule`, and the save validation, so
   don't hard-code 5 or 7 anywhere. Weeks saved before weekends existed simply have no
