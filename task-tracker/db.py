@@ -76,6 +76,30 @@ def _sqlite_init_schema(conn):
     )
     conn.execute(
         """
+        CREATE TABLE IF NOT EXISTS shift_colors (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          -- '#rrggbb', lowercase. Matched against a cell's fill by nearest colour,
+          -- because the same "colour" pastes slightly differently between files.
+          hex TEXT NOT NULL UNIQUE,
+          label TEXT NOT NULL
+        );
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS import_runs (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          ran_at TIMESTAMP NOT NULL,
+          ok INTEGER NOT NULL DEFAULT 0,
+          -- One sentence for the Schedule page, plus any warnings (one per line).
+          -- A refused run records why, so a blocked import is visible rather than silent.
+          summary TEXT,
+          warnings TEXT
+        );
+        """
+    )
+    conn.execute(
+        """
         CREATE TABLE IF NOT EXISTS schedule_columns (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
           -- Matches schedule_cells.col_index. Never renumber: the stored cells are

@@ -137,12 +137,28 @@ not affect the live site.
   don't hard-code 5 or 7 anywhere. Weeks saved before weekends existed simply have no
   Sat/Sun rows; re-saving one writes them as blank without flagging a change. The
   operator's widget lays the week out in a 5-column grid so Sat/Sun sit under Mon–Fri.
-- **Shift colours**: `SCHEDULE_SHIFT_COLORS` maps a cell colour to a shift by *nearest*
-  match (Excel pastes vary): green Early, amber Day, blue **Late**, red **Night**
-  (both `#ff0000` and `#c00000` anchor Night — they are >tolerance apart), pale-yellow
-  Drive. Any other colour is not a shift and is left out of the report summary.
-  `SCHEDULE_TEXT_LABELS` rewrites cell text for display only (`DRIJFVEER` → `pro-rate`);
-  the grid keeps whatever the manager pasted.
+- **Shift colours** live in the DB (`shift_colors`: `hex`, `label`) and are edited on
+  `/schedule`; `SCHEDULE_SHIFT_COLORS` is only the seed. `schedule_shift_label(hex, colors)`
+  matches by *nearest* colour within tolerance (the same colour pastes slightly differently
+  between files), so pass the DB map — green Early, amber Day, blue Late, red Night
+  (`#ff0000` and `#c00000` both anchor Night), pale-yellow Drive. A colour that isn't listed
+  is not a shift (holiday/ADV/JV) and stays out of the report summary.
+  `SCHEDULE_TEXT_LABELS` rewrites cell text for display only (`DRIJFVEER` → `pro-rate`).
+- **The roster comes from the master Excel**, which is the single source of truth: the
+  `/schedule` grid is **read-only** and there is deliberately no save-the-grid endpoint — a
+  second place to edit is how the two copies drift apart. `roster_import.py` runs nightly
+  from the operator's crontab (no root: it reads the share over SMB, no mount) and from the
+  **Import now** button; `~/.roster.env` (outside the repo, `0600`) holds the share
+  credentials and the `{year}` path template, which is resolved per *imported date* so the
+  January rollover and a week spanning New Year both work. The file still carries **2022**
+  dates, so only month+day are read. Columns are matched by **name** against
+  `schedule_columns.label`, never by position; unmatched names are reported and skipped.
+  A **safety gate** refuses the whole run if fewer than `MIN_NAMES_MATCHED` names match or
+  if it would overwrite more than `MAX_OVERWRITE_FRACTION` of the shifts *already* stored
+  (counting overwrites, not changes — the first import legitimately fills everything).
+  Every run, including a refusal, is recorded in `import_runs` and shown on `/schedule`.
+  Writes go through `schedule_io.apply_week()`, shared with nothing else, so the
+  change-detection that drives the operator banner has one implementation.
 - **Shift-change warning**: `schedule_cells.updated_at` advances only on a real change
   (text or color), `users.schedule_seen_at` records acknowledgement;
   `/api/schedule-changes` → sticky banner on the operator list, cleared by

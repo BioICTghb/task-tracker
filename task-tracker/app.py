@@ -84,9 +84,10 @@ SCHEDULE_TEXT_LABELS = {
 SCHEDULE_SHIFT_MATCH_TOLERANCE = 60  # max RGB Euclidean distance to still count as a match
 
 
-def schedule_shift_label(hex_color):
-    """Nearest-color match against SCHEDULE_SHIFT_COLORS, within tolerance.
-    Returns None if the color is missing/unrecognized (blank, ADV, holiday, JV, etc.)."""
+def schedule_shift_label(hex_color, colors=None):
+    """Nearest-color match within tolerance. `colors` is the editable {hex: label}
+    map from the database; SCHEDULE_SHIFT_COLORS is only the fallback/seed. Returns
+    None if the color is missing/unrecognized (blank, ADV, holiday, JV, etc.)."""
     hex_color = (hex_color or "").strip().lstrip("#")
     if len(hex_color) != 6:
         return None
@@ -95,7 +96,7 @@ def schedule_shift_label(hex_color):
     except ValueError:
         return None
     best_label, best_dist = None, SCHEDULE_SHIFT_MATCH_TOLERANCE
-    for ref_hex, label in SCHEDULE_SHIFT_COLORS.items():
+    for ref_hex, label in (colors or SCHEDULE_SHIFT_COLORS).items():
         rr, rg, rb = (int(ref_hex.lstrip("#")[i:i + 2], 16) for i in (0, 2, 4))
         dist = ((r - rr) ** 2 + (g - rg) ** 2 + (b - rb) ** 2) ** 0.5
         if dist < best_dist:
@@ -209,6 +210,14 @@ def now_local():
 
 def today_local():
     return now_local().strftime("%Y-%m-%d")
+
+
+def record_import_run_standalone(ok, summary, warnings):
+    """Store the outcome of a roster import. Module-level so the nightly cron
+    script can record a refused or failed run too, not just the web app."""
+    db.execute("INSERT INTO import_runs (ran_at, ok, summary, warnings) VALUES (%s, %s, %s, %s)",
+               (now_local().strftime("%Y-%m-%d %H:%M:%S"), 1 if ok else 0,
+                summary, chr(10).join(warnings or [])))
 
 
 def daily_grace_day():
@@ -590,7 +599,50 @@ def create_app():
             prev_month="%04d-%02d" % prev_month,
             next_month="%04d-%02d" % next_month,
             msg=request.args.get("msg"),
+            shift_colors=db.query("SELECT id, hex, label FROM shift_colors ORDER BY label, hex"),
+            last_import=last_import_run(),
         )
+
+    @app.route("/schedule/colors", methods=["POST"])
+    @manager_required
+    def schedule_add_color():
+        """Add (or relabel) a colour. The roster's colour code is a convention that
+        changes with the spreadsheet, so it must not need a deploy."""
+        hexv = (request.form.get("hex") or "").strip().lower()
+        label = (request.form.get("label") or "").strip()[:32]
+        if not _HEX_COLOR_RE.match(hexv) or not label:
+            return redirect(url_for("schedule", msg="A colour needs a #rrggbb value and a name."))
+        row = db.query("SELECT id FROM shift_colors WHERE hex=%s", (hexv,), one=True)
+        if row:
+            db.execute("UPDATE shift_colors SET label=%s WHERE id=%s", (label, row["id"]))
+        else:
+            db.execute("INSERT INTO shift_colors (hex, label) VALUES (%s, %s)", (hexv, label))
+        return redirect(url_for("schedule", msg="Saved %s as %s." % (hexv, label)))
+
+    @app.route("/schedule/colors/<int:cid>", methods=["POST"])
+    @manager_required
+    def schedule_update_color(cid):
+        hexv = (request.form.get("hex") or "").strip().lower()
+        label = (request.form.get("label") or "").strip()[:32]
+        if not _HEX_COLOR_RE.match(hexv) or not label:
+            return redirect(url_for("schedule", msg="A colour needs a #rrggbb value and a name."))
+        clash = db.query("SELECT id FROM shift_colors WHERE hex=%s AND id<>%s", (hexv, cid), one=True)
+        if clash:
+            return redirect(url_for("schedule", msg="%s is already listed." % hexv))
+        db.execute("UPDATE shift_colors SET hex=%s, label=%s WHERE id=%s", (hexv, label, cid))
+        return redirect(url_for("schedule", msg="Saved %s as %s." % (hexv, label)))
+
+    @app.route("/schedule/colors/<int:cid>/delete", methods=["POST"])
+    @manager_required
+    def schedule_delete_color(cid):
+        """Stop treating a colour as a shift. Stored cells keep their colour; they
+        just stop counting as Early/Day/Late/Night in the report."""
+        row = db.query("SELECT hex, label FROM shift_colors WHERE id=%s", (cid,), one=True)
+        if not row:
+            abort(404)
+        db.execute("DELETE FROM shift_colors WHERE id=%s", (cid,))
+        return redirect(url_for("schedule",
+                                msg="%s (%s) is no longer a shift colour." % (row["hex"], row["label"])))
 
     def _form_uid():
         """The operator account picked in a column form, or None for 'nobody'."""
@@ -707,6 +759,27 @@ def create_app():
 
     seed_schedule_columns()
 
+    def shift_colors_map():
+        """Editable {'#rrggbb': 'Night', ...}. The roster's colours are a business
+        convention, not a constant: they changed once and will change again."""
+        return {r["hex"]: r["label"]
+                for r in db.query("SELECT hex, label FROM shift_colors ORDER BY label, hex")}
+
+    def seed_shift_colors():
+        with app.app_context():
+            if db.query("SELECT 1 FROM shift_colors", one=True):
+                return
+            for hexv, label in SCHEDULE_SHIFT_COLORS.items():
+                db.execute("INSERT INTO shift_colors (hex, label) VALUES (%s, %s)",
+                           (hexv.lower(), label))
+
+    seed_shift_colors()
+
+    def last_import_run():
+        return db.query("SELECT ran_at, ok, summary, warnings FROM import_runs "
+                        "ORDER BY id DESC", one=True)
+
+
     @app.route("/api/my-schedule")
     def api_my_schedule():
         """One week's shifts for the logged-in operator (matched by display name
@@ -752,69 +825,24 @@ def create_app():
 
     _HEX_COLOR_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
 
-    @app.route("/api/schedule", methods=["POST"])
+    # The grid is read-only: the master Excel on the share is the single source of
+    # truth and the nightly import writes it (roster_import.py). There is
+    # deliberately no endpoint to save the grid - a second place to edit the roster
+    # is how the two drift apart.
+    @app.route("/schedule/import", methods=["POST"])
     @manager_required
-    def api_save_schedule():
-        """Bulk-save the grid for one week. Body:
-        {"week_start": "YYYY-MM-DD",
-         "cells": [[{"text": "...", "color": "#rrggbb"}, ...12], ...5 rows]}."""
-        data = request.get_json(silent=True) or {}
+    def schedule_import_now():
+        """Run the import on demand, so an urgent change made in Excel reaches the
+        floor without waiting for the nightly run."""
+        import roster_import
         try:
-            monday = datetime.strptime(data.get("week_start") or "", "%Y-%m-%d").date()
-        except ValueError:
-            return jsonify({"error": "invalid week_start"}), 400
-        cells = data.get("cells")
-        if not isinstance(cells, list) or len(cells) != SCHEDULE_ROWS or \
-           any(not isinstance(row, list) or len(row) != len(column_rows()) for row in cells):
-            return jsonify({"error": "invalid cells"}), 400
-
-        upsert_sql = (
-            """INSERT INTO schedule_cells (work_date, col_index, shift, color, updated_at) VALUES (%s, %s, %s, %s, %s)
-               ON CONFLICT(work_date, col_index) DO UPDATE SET shift=excluded.shift, color=excluded.color, updated_at=excluded.updated_at"""
-            if db.IS_SQLITE else
-            """INSERT INTO schedule_cells (work_date, col_index, shift, color, updated_at) VALUES (%s, %s, %s, %s, %s)
-               ON DUPLICATE KEY UPDATE shift=VALUES(shift), color=VALUES(color), updated_at=VALUES(updated_at)"""
-        )
-        # Existing values for this week, so updated_at only advances on a *real*
-        # change (the client re-saves the whole grid; we must not flag no-ops).
-        week_isos = [(monday + timedelta(days=i)).isoformat() for i in range(SCHEDULE_ROWS)]
-        ph = ",".join(["%s"] * len(week_isos))
-        prev = {}
-        for r in db.query(
-            f"SELECT work_date, col_index, shift, color, updated_at FROM schedule_cells "
-            f"WHERE work_date IN ({ph})", tuple(week_isos)):
-            wd = r["work_date"] if isinstance(r["work_date"], str) else r["work_date"].isoformat()
-            prev[(wd, r["col_index"])] = r
-        now_iso = now_local().isoformat(timespec="microseconds")
-        today_iso = now_local().date().isoformat()
-        notified = []          # operators whose *upcoming* shifts changed
-
-        cols = column_rows()
-        for i, row in enumerate(cells):
-            d = week_isos[i]
-            for c, cell in enumerate(row):
-                pos = cols[c]["position"]
-                cell = cell if isinstance(cell, dict) else {"text": cell, "color": ""}
-                text = (cell.get("text") or "").strip()[:64]
-                color = (cell.get("color") or "").strip()
-                color = color if _HEX_COLOR_RE.match(color) else ""
-                old = prev.get((d, pos))
-                if old is None:
-                    # New cell only counts as a change if it actually has a shift.
-                    changed = text != ""
-                    keep = None
-                else:
-                    changed = (old["shift"] or "") != text or (old["color"] or "") != color
-                    keep = old["updated_at"]
-                db.execute(upsert_sql, (d, pos, text, color, now_iso if changed else keep))
-                # Only a column linked to an account can notify anyone.
-                if changed and d >= today_iso and cols[c]["user_id"]:
-                    name = cols[c]["label"]
-                    if name not in notified:
-                        notified.append(name)
-        # Tell the manager who will see a "your shift changed" notice, so saving
-        # isn't a silent act with invisible consequences.
-        return jsonify({"ok": True, "notified": notified})
+            ok, summary, warnings, _ = roster_import.run_import(
+                dry_run=bool(request.form.get("dry_run")))
+        except Exception as e:
+            ok, summary, warnings = False, "Import failed: %s: %s" % (type(e).__name__, e), []
+        if not request.form.get("dry_run"):
+            record_import_run_standalone(ok, summary, warnings)
+        return redirect(url_for("schedule", msg=summary))
 
     @app.route("/api/schedule-changes")
     def api_schedule_changes():
@@ -1400,13 +1428,14 @@ def create_app():
             "SELECT col_index, shift, color FROM schedule_cells WHERE work_date=%s", (today,)
         )
         by_col = {r["col_index"]: r for r in rows}
+        colors = shift_colors_map()
         out = []
         for c in column_rows(include_retired=False):
             name = c["label"]
             r = by_col.get(c["position"])
             if not r:
                 continue
-            label = schedule_shift_label(r["color"])
+            label = schedule_shift_label(r["color"], colors)
             if not label:
                 continue
             out.append({"name": name, "shift": label,

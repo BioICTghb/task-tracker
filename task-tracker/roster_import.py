@@ -1,0 +1,297 @@
+"""Import the shift roster from the master Excel on the file share.
+
+The spreadsheet is the single source of truth; the app's grid is read-only. This
+runs nightly from the operator account's crontab (no root, no permanent mount:
+the file is read straight over SMB) and can also be triggered from the Schedule
+page.
+
+Design notes, all of them lessons from this roster:
+
+* Columns are matched by **name**, never by position. A person leaving, or a blank
+  spacer column appearing, used to shift everybody's roster sideways.
+* Nothing is guessed. A name in the sheet with no matching column is reported and
+  skipped; a column with no name in the sheet is left untouched.
+* A **safety gate** refuses the whole run if too few names matched or too much of
+  the window would change, so a restructured template (the 2027 revision is
+  already planned) cannot silently wipe the rosters overnight.
+* The year *inside* the file is ignored - the sheet still carries 2022 dates. Only
+  month and day are read, and the year comes from the file being opened.
+
+Usage:
+    python roster_import.py [--dry-run] [--weeks N] [--year YYYY] [--force]
+"""
+import argparse
+import datetime
+import io
+import os
+import re
+import sys
+
+APP_DIR = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, APP_DIR)
+
+CONFIG_PATH = os.environ.get("ROSTER_ENV", os.path.expanduser("~/.roster.env"))
+
+# Refuse the run rather than write rubbish.
+MIN_NAMES_MATCHED = 5            # fewer than this => the template probably changed
+# Share of *already-filled* cells that may be overwritten. Filling empty future
+# weeks is routine and must not trip the gate (the very first import fills
+# everything); rewriting a roster that is already there is the dangerous case.
+MAX_OVERWRITE_FRACTION = 0.40
+MIN_EXISTING_TO_JUDGE = 20       # too little history to draw any conclusion from
+
+
+def load_config(path=CONFIG_PATH):
+    cfg = {}
+    with io.open(path, encoding="utf-8") as f:
+        for ln in f:
+            ln = ln.strip()
+            if ln and not ln.startswith("#") and "=" in ln:
+                k, v = ln.split("=", 1)
+                cfg[k.strip()] = v.strip()
+    missing = [k for k in ("ROSTER_SMB_HOST", "ROSTER_SMB_SHARE", "ROSTER_SMB_PATH_TEMPLATE",
+                           "ROSTER_SMB_USER", "ROSTER_SMB_PASSWORD") if not cfg.get(k)]
+    if missing:
+        raise RuntimeError("%s is missing: %s" % (path, ", ".join(missing)))
+    return cfg
+
+
+def norm(name):
+    """Compare names forgivingly: the sheet has 'Damian Garczynski ' with a
+    trailing space and 'Savrii\\nAnatolii' with a line break inside it."""
+    return re.sub(r"\s+", " ", (name or "").replace("\n", " ")).strip().lower()
+
+
+def fetch_workbook(cfg, year):
+    """The workbook's bytes for a given year, read straight off the share."""
+    import smbclient
+    user, domain = cfg["ROSTER_SMB_USER"], cfg.get("ROSTER_SMB_DOMAIN", "")
+    smbclient.register_session(cfg["ROSTER_SMB_HOST"],
+                               username=(domain + "\\" + user) if domain else user,
+                               password=cfg["ROSTER_SMB_PASSWORD"])
+    rel = cfg["ROSTER_SMB_PATH_TEMPLATE"].format(year=year)
+    unc = "\\\\%s\\%s\\%s" % (cfg["ROSTER_SMB_HOST"], cfg["ROSTER_SMB_SHARE"],
+                              rel.replace("/", "\\"))
+    with smbclient.open_file(unc, mode="rb") as f:
+        return f.read(), unc
+
+
+def cell_text(value):
+    """'11,6' from 11.6, 'ADV' from text. Excel stores the hours as numbers and
+    shows them with a comma; roster_hours() accepts either separator."""
+    if value is None:
+        return ""
+    if isinstance(value, float):
+        s = ("%.2f" % value).rstrip("0").rstrip(".")
+        return s.replace(".", ",")
+    if isinstance(value, int):
+        return str(value)
+    return str(value).strip()
+
+
+def cell_color(cell):
+    """'#rrggbb' only for a real solid fill. An unfilled cell reports its colour as
+    theme 0 or 00000000 - reading those literally would make every blank day black."""
+    fill = getattr(cell, "fill", None)
+    if fill is None or (fill.patternType or "") != "solid":
+        return ""
+    rgb = getattr(getattr(fill, "fgColor", None), "rgb", None)
+    if not isinstance(rgb, str) or len(rgb) < 6:
+        return ""
+    hexv = "#" + rgb[-6:].lower()
+    if hexv == "#000000":          # Excel's "no fill" sentinel, not a shift colour
+        return ""
+    return hexv
+
+
+def find_layout(ws, labels):
+    """Locate the header row and the date column instead of hard-coding them, so a
+    reshuffled template still imports. Returns (header_row, date_col, {col: label})."""
+    wanted = {norm(l) for l in labels}
+    best = (0, None, {})
+    for r in range(1, min(ws.max_row, 40) + 1):
+        found = {}
+        for c in range(1, ws.max_column + 1):
+            v = ws.cell(row=r, column=c).value
+            if isinstance(v, str) and norm(v) in wanted:
+                found[c] = norm(v)
+        if len(found) > best[0]:
+            best = (len(found), r, found)
+    header_row = best[1]
+    if not header_row:
+        return None, None, {}
+    # The date column is whichever holds the most date cells.
+    counts = {}
+    for c in range(1, min(ws.max_column, 12) + 1):
+        n = 0
+        for r in range(header_row, ws.max_row + 1):
+            v = ws.cell(row=r, column=c).value
+            if isinstance(v, (datetime.date, datetime.datetime)):
+                n += 1
+        counts[c] = n
+    date_col = max(counts, key=counts.get) if counts else None
+    if not counts.get(date_col):
+        date_col = None
+    return header_row, date_col, best[2]
+
+
+def run_import(weeks=8, dry_run=False, force=False, year=None, today=None):
+    """Import the roster. Returns (ok, summary, warnings, detail)."""
+    import openpyxl
+    import app as m
+    import db
+    import schedule_io
+
+    warnings, detail = [], []
+    cfg = load_config()
+    today = today or datetime.date.today()
+    monday = today - datetime.timedelta(days=today.weekday())
+    window = [monday + datetime.timedelta(days=i) for i in range(weeks * 7)]
+
+    with m.app.app_context():
+        columns = db.query("SELECT id, position, label, user_id, retired "
+                           "FROM schedule_columns ORDER BY position")
+        labels = [c["label"] for c in columns]
+        by_label = {norm(c["label"]): i for i, c in enumerate(columns)}
+
+        # One workbook per calendar year the window touches, so a week spanning
+        # New Year still gets both halves.
+        years = sorted({(year or d.year) for d in window})
+        sheets = {}
+        for y in years:
+            try:
+                data, unc = fetch_workbook(cfg, y)
+            except Exception as e:
+                warnings.append("could not read the %s workbook (%s: %s)" % (y, type(e).__name__, e))
+                continue
+            if data[:4] != b"PK\x03\x04":
+                warnings.append("the %s workbook is still protected/encrypted - cannot read it" % y)
+                continue
+            vals = openpyxl.load_workbook(io.BytesIO(data), data_only=True)
+            sty = openpyxl.load_workbook(io.BytesIO(data))
+            ws_v = vals[vals.sheetnames[0]]
+            ws_s = sty[sty.sheetnames[0]]
+            header_row, date_col, found = find_layout(ws_v, labels)
+            if not header_row or not date_col:
+                warnings.append("%s: could not find the names row or the date column" % y)
+                continue
+            unknown = []
+            for c in range(1, ws_v.max_column + 1):
+                v = ws_v.cell(row=header_row, column=c).value
+                if isinstance(v, str) and norm(v) and c not in found and len(norm(v)) > 3:
+                    if norm(v) not in by_label and not norm(v).isdigit():
+                        unknown.append(str(v).strip()[:30])
+            for u in unknown[:10]:
+                warnings.append("%s: sheet has '%s' with no matching column - skipped" % (y, u))
+            for lbl in labels:
+                if norm(lbl) not in set(found.values()):
+                    warnings.append("%s: column '%s' is not in the sheet - left untouched" % (y, lbl))
+            # (month, day) -> row
+            rowof = {}
+            for r in range(header_row, ws_v.max_row + 1):
+                v = ws_v.cell(row=r, column=date_col).value
+                if isinstance(v, (datetime.date, datetime.datetime)):
+                    d = v.date() if isinstance(v, datetime.datetime) else v
+                    rowof.setdefault((d.month, d.day), r)
+            sheets[y] = (ws_v, ws_s, found, rowof)
+            detail.append("%s: names row %d, date column %d, %d names matched, %d dated rows"
+                          % (y, header_row, date_col, len(found), len(rowof)))
+
+        if not sheets:
+            return False, "No workbook could be read - nothing was changed.", warnings, detail
+
+        matched = max(len(s[2]) for s in sheets.values())
+        if matched < MIN_NAMES_MATCHED and not force:
+            return (False, "Refused: only %d names in the sheet matched a column (expected at "
+                           "least %d). The template has probably changed - nothing was written."
+                    % (matched, MIN_NAMES_MATCHED), warnings, detail)
+
+        # Build the weeks, then decide whether to write them.
+        planned, missing_days = [], 0
+        for wstart in range(0, len(window), 7):
+            days = window[wstart:wstart + 7]
+            rows = []
+            for d in days:
+                row = [{"text": "", "color": ""} for _ in columns]
+                entry = sheets.get(year or d.year)
+                if entry:
+                    ws_v, ws_s, found, rowof = entry
+                    r = rowof.get((d.month, d.day))
+                    if r is None:
+                        missing_days += 1
+                    else:
+                        for c, lbl in found.items():
+                            idx = by_label.get(lbl)
+                            if idx is None:
+                                continue
+                            row[idx] = {"text": cell_text(ws_v.cell(row=r, column=c).value),
+                                        "color": cell_color(ws_s.cell(row=r, column=c))}
+                rows.append(row)
+            planned.append(([d.isoformat() for d in days], rows))
+        if missing_days:
+            warnings.append("%d day(s) in the window have no row in the sheet - left untouched"
+                            % missing_days)
+
+        now_iso = m.now_local().isoformat(timespec="microseconds")
+        today_iso = today.isoformat()
+        total_cells = sum(len(r) * len(rws) for r, rws in planned) or 1
+
+        # Dry run first, so the gate can judge the size of the change.
+        changed = overwritten = existing = 0
+        for iso, rows in planned:
+            c, _, o, e = schedule_io.apply_week(iso, rows, columns, now_iso, today_iso,
+                                                dry_run=True)
+            changed += c
+            overwritten += o
+            existing += e
+        if existing >= MIN_EXISTING_TO_JUDGE and not force:
+            frac = overwritten / float(existing)
+            if frac > MAX_OVERWRITE_FRACTION:
+                return (False, "Refused: the import would overwrite %d of the %d shifts already "
+                               "in this window (%.0f%%), far more than expected. Check the "
+                               "spreadsheet - nothing was written."
+                        % (overwritten, existing, frac * 100), warnings, detail)
+
+        if dry_run:
+            return (True, "Dry run: would change %d of %d cells over %d weeks "
+                          "(%d of %d existing shifts overwritten)."
+                    % (changed, total_cells, len(planned), overwritten, existing),
+                    warnings, detail)
+
+        notified = []
+        for iso, rows in planned:
+            _, n, _, _ = schedule_io.apply_week(iso, rows, columns, now_iso, today_iso)
+            for x in n:
+                if x not in notified:
+                    notified.append(x)
+        summary = ("Imported %d weeks from the master file: %d cells changed%s."
+                   % (len(planned), changed,
+                      ("; shift change flagged to " + ", ".join(notified)) if notified else ""))
+        return True, summary, warnings, detail
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument("--dry-run", action="store_true", help="report what would change, write nothing")
+    ap.add_argument("--weeks", type=int, default=8, help="weeks to import from this Monday (default 8)")
+    ap.add_argument("--year", type=int, help="force a single workbook year")
+    ap.add_argument("--force", action="store_true", help="bypass the safety gate")
+    a = ap.parse_args()
+    ok, summary, warnings, detail = run_import(weeks=a.weeks, dry_run=a.dry_run,
+                                               force=a.force, year=a.year)
+    if not a.dry_run:
+        # Record refusals and failures too - a blocked import must be visible on
+        # the Schedule page, not just in cron's mail.
+        import app as m
+        with m.app.app_context():
+            m.record_import_run_standalone(ok, summary, warnings)
+    for d in detail:
+        print("   ", d)
+    for w in warnings:
+        print("  warning:", w)
+    print(("OK: " if ok else "FAILED: ") + summary)
+    return 0 if ok else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
