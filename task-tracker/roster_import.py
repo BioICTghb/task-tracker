@@ -40,6 +40,21 @@ MIN_NAMES_MATCHED = 5            # fewer than this => the template probably chan
 MAX_OVERWRITE_FRACTION = 0.40
 MIN_EXISTING_TO_JUDGE = 20       # too little history to draw any conclusion from
 
+# Headings in the sheet that label a legend or a section rather than a person. Kept
+# as an explicit list because "Diensten" and "Piotr" are both single words - any
+# heuristic would either hide a real operator or keep crying wolf about a legend.
+# Extend it without a deploy: ROSTER_IGNORE_LABELS=a,b in ~/.roster.env.
+LEGEND_LABELS = {
+    "feestdag / schoolvakantie", "feestdag", "schoolvakantie", "diensten", "verlof",
+    "overige", "halve dagen", "legenda", "legend", "totaal", "total",
+}
+
+
+def is_legend(name, extra=()):
+    """A heading that is not somebody's name. '/' catches combined labels like
+    'Feestdag / schoolvakantie' without listing every variant."""
+    return name in LEGEND_LABELS or name in extra or "/" in name
+
 
 def load_config(path=CONFIG_PATH):
     cfg = {}
@@ -144,6 +159,7 @@ def run_import(weeks=8, dry_run=False, force=False, year=None, today=None):
 
     warnings, detail = [], []
     cfg = load_config()
+    ignore_extra = {norm(x) for x in (cfg.get("ROSTER_IGNORE_LABELS") or "").split(",") if x.strip()}
     today = today or datetime.date.today()
     monday = today - datetime.timedelta(days=today.weekday())
     window = [monday + datetime.timedelta(days=i) for i in range(weeks * 7)]
@@ -175,14 +191,22 @@ def run_import(weeks=8, dry_run=False, force=False, year=None, today=None):
             if not header_row or not date_col:
                 warnings.append("%s: could not find the names row or the date column" % y)
                 continue
-            unknown = []
+            unknown, ignored = [], []
             for c in range(1, ws_v.max_column + 1):
                 v = ws_v.cell(row=header_row, column=c).value
-                if isinstance(v, str) and norm(v) and c not in found and len(norm(v)) > 3:
-                    if norm(v) not in by_label and not norm(v).isdigit():
-                        unknown.append(str(v).strip()[:30])
+                if not isinstance(v, str) or not norm(v) or c in found or len(norm(v)) <= 3:
+                    continue
+                if norm(v) in by_label or norm(v).isdigit():
+                    continue
+                (ignored if is_legend(norm(v), ignore_extra) else unknown).append(str(v).strip()[:30])
+            if ignored:
+                # One quiet line: these are expected, and burying a real problem in
+                # them is how Piotr went a month without a roster.
+                warnings.append("%s: ignored legend headings (%s)"
+                                % (y, ", ".join(sorted(set(ignored))[:8])))
             for u in unknown[:10]:
-                warnings.append("%s: sheet has '%s' with no matching column - skipped" % (y, u))
+                warnings.append("%s: sheet column '%s' matches no column in the app - "
+                                "NOBODY RECEIVES THOSE SHIFTS" % (y, u))
             for lbl in labels:
                 if norm(lbl) not in set(found.values()):
                     warnings.append("%s: column '%s' is not in the sheet - left untouched" % (y, lbl))
@@ -275,10 +299,13 @@ def main():
     ap.add_argument("--dry-run", action="store_true", help="report what would change, write nothing")
     ap.add_argument("--weeks", type=int, default=8, help="weeks to import from this Monday (default 8)")
     ap.add_argument("--year", type=int, help="force a single workbook year")
+    ap.add_argument("--start", help="YYYY-MM-DD: import from the Monday of this week "
+                                    "instead of the current one (for backfilling)")
     ap.add_argument("--force", action="store_true", help="bypass the safety gate")
     a = ap.parse_args()
+    start = datetime.datetime.strptime(a.start, "%Y-%m-%d").date() if a.start else None
     ok, summary, warnings, detail = run_import(weeks=a.weeks, dry_run=a.dry_run,
-                                               force=a.force, year=a.year)
+                                               force=a.force, year=a.year, today=start)
     if not a.dry_run:
         # Record refusals and failures too - a blocked import must be visible on
         # the Schedule page, not just in cron's mail.
