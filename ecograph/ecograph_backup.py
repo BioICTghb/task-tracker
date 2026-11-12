@@ -3,7 +3,8 @@
 
     ~/task-tracker/task-tracker/.venv/bin/python ~/ecograph/ecograph_backup.py
 
-Destination: \\\\<ROSTER_SMB_HOST>\\<ROSTER_SMB_SHARE>\\3_ebo_production\\Ecograph\\
+Destination: \\\\<ROSTER_SMB_HOST>\\<ROSTER_SMB_SHARE>\\@_IT\\Wastewater readings - automatic\\
+(the Company share, mapped as L: on office PCs)
 Every *.csv in ~/ecograph/data is mirrored there (the yearly logs and the history
 backfill). Each file is written under a temporary name, size-checked, then renamed
 over the old copy, so an interrupted run never leaves a truncated backup.
@@ -21,7 +22,7 @@ import smbclient
 
 ENV = os.path.expanduser("~/.roster.env")
 DATA = os.path.expanduser("~/ecograph/data")
-DEST_DIR = r"3_ebo_production\Ecograph"
+DEST_DIR = r"@_IT\Wastewater readings - automatic"
 
 
 def load_env(path):
