@@ -90,7 +90,8 @@
       req.onerror = function () {
         add("Offline storage (IndexedDB)", false,
             "cannot be opened: " + (req.error && req.error.name) +
-            " — Private Browsing, blocked cookies, or full storage");
+            " — on an iPhone this is usually Lockdown Mode (it can be switched off for "
+            + "just this site) or Private Browsing; otherwise blocked cookies or full storage");
         realStore();
       };
       req.onblocked = function () {
