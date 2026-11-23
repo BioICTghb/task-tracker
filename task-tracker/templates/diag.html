@@ -1,0 +1,151 @@
+{% extends "base.html" %}
+{% block title %}Device check{% endblock %}
+
+{% block content %}
+<h1 class="h4 mb-1">Device check</h1>
+<p class="text-muted small">
+  Open this on the phone that is misbehaving and read the list. Everything here runs on the
+  phone itself — nothing is changed. Show or screenshot the result.
+</p>
+
+{# Server-side facts first: these render even if every browser feature fails. #}
+<table class="table table-sm align-middle">
+  <tbody>
+    <tr><th style="width:12rem">Signed in as</th><td>{{ current_user.name }} ({{ current_user.role }})</td></tr>
+    <tr><th>Session</th><td>working — this page could not load otherwise</td></tr>
+    <tr><th>App version</th><td>{{ app_version }}</td></tr>
+  </tbody>
+</table>
+
+<div id="diag">Running checks…</div>
+{% endblock %}
+
+{% block page_script %}
+<script>
+(function () {
+  const out = [];
+  function add(name, ok, detail) {
+    out.push({ name: name, ok: ok, detail: detail == null ? "" : String(detail) });
+    render();
+  }
+  function render() {
+    document.getElementById("diag").innerHTML =
+      '<table class="table table-sm align-middle"><tbody>' +
+      out.map(function (r) {
+        const badge = r.ok === null
+          ? '<span class="badge text-bg-secondary">info</span>'
+          : (r.ok ? '<span class="badge text-bg-success">OK</span>'
+                  : '<span class="badge text-bg-danger">PROBLEM</span>');
+        return '<tr><th style="width:12rem">' + r.name + "</th><td>" + badge +
+               ' <span class="small">' + r.detail + "</span></td></tr>";
+      }).join("") + "</tbody></table>";
+  }
+
+  // How the app is being used - an installed home-screen app and a Safari tab have
+  // separate storage on iOS, which is why one can work while the other does not.
+  add("Opened as", null, (window.navigator.standalone === true)
+    ? "installed home-screen app" : "browser tab");
+  add("Online", navigator.onLine === true, navigator.onLine ? "" : "no connection right now");
+  add("Phone / browser", null, navigator.userAgent);
+
+  // localStorage: blocked outright when cookies are blocked or in private browsing.
+  try {
+    localStorage.setItem("tt-diag", "1");
+    localStorage.removeItem("tt-diag");
+    add("Saving settings (localStorage)", true, "");
+  } catch (e) {
+    add("Saving settings (localStorage)", false,
+        e.name + " — usually Private Browsing, or Safari set to block all cookies");
+  }
+
+  // IndexedDB: this is what holds queued photos and the offline job list. If it
+  // fails, the task list and the Extra job button are the first things to break.
+  if (!window.indexedDB) {
+    add("Offline storage (IndexedDB)", false, "not available at all in this mode");
+  } else {
+    try {
+      const req = indexedDB.open("tt-diag-probe", 1);
+      req.onupgradeneeded = function () { req.result.createObjectStore("probe"); };
+      req.onsuccess = function () {
+        try {
+          const db = req.result;
+          const t = db.transaction("probe", "readwrite");
+          t.objectStore("probe").put({ x: 1 }, "k");
+          t.oncomplete = function () {
+            db.close();
+            try { indexedDB.deleteDatabase("tt-diag-probe"); } catch (e) {}
+            add("Offline storage (IndexedDB)", true, "can be written");
+            realStore();
+          };
+          t.onerror = function () {
+            add("Offline storage (IndexedDB)", false, "opens but cannot be written: " +
+                (t.error && t.error.name));
+            realStore();
+          };
+        } catch (e) {
+          add("Offline storage (IndexedDB)", false, e.name + ": " + e.message);
+          realStore();
+        }
+      };
+      req.onerror = function () {
+        add("Offline storage (IndexedDB)", false,
+            "cannot be opened: " + (req.error && req.error.name) +
+            " — Private Browsing, blocked cookies, or full storage");
+        realStore();
+      };
+      req.onblocked = function () {
+        add("Offline storage (IndexedDB)", false, "blocked by another open copy of the app");
+      };
+    } catch (e) {
+      add("Offline storage (IndexedDB)", false, e.name + ": " + e.message);
+      realStore();
+    }
+  }
+
+  // The app's own store: how many photos/jobs are still waiting to upload. Worth
+  // knowing before anyone suggests clearing the app's data.
+  function realStore() {
+    if (!window.TT || !TT.db) { add("Queued photos waiting to upload", null, "cannot read"); return; }
+    TT.db.getOutbox().then(function (items) {
+      const broken = TT.db.storageBroken && TT.db.storageBroken();
+      add("Queued photos waiting to upload", broken ? false : null,
+          broken ? "cannot read this phone's store — do NOT clear app data before telling your manager"
+                 : items.length + " waiting");
+    }).catch(function (e) {
+      add("Queued photos waiting to upload", false, "cannot read: " + e.name);
+    });
+  }
+
+  if (navigator.storage && navigator.storage.estimate) {
+    navigator.storage.estimate().then(function (s) {
+      const mb = function (n) { return Math.round((n || 0) / 1048576) + " MB"; };
+      add("Space this app may use", null, mb(s.usage) + " used of " + mb(s.quota) + " allowed");
+    }).catch(function () {});
+  }
+
+  // A stale service worker serves old code; the cache name tells us which build.
+  if ("serviceWorker" in navigator) {
+    navigator.serviceWorker.getRegistration().then(function (reg) {
+      if (!reg) { add("Offline app installed (service worker)", null, "none registered"); return; }
+      add("Offline app installed (service worker)", true,
+          "active: " + ((reg.active && reg.active.scriptURL) || "—"));
+      if (window.caches && caches.keys) {
+        caches.keys().then(function (keys) {
+          add("Cached app version", null, keys.join(", ") || "none");
+        });
+      }
+    }).catch(function (e) { add("Offline app installed (service worker)", false, e.name); });
+  } else {
+    add("Offline app installed (service worker)", null, "not supported in this mode");
+  }
+
+  // Can the phone actually reach the API right now?
+  fetch("/api/tasks").then(function (r) {
+    add("Can load the job list from the server", r.ok, r.ok ? "" : "server replied " + r.status);
+    return r.ok ? r.json() : [];
+  }).then(function (list) {
+    if (list && list.length !== undefined) add("Jobs the server is sending", null, list.length + " job(s)");
+  }).catch(function (e) { add("Can load the job list from the server", false, e.message); });
+})();
+</script>
+{% endblock %}

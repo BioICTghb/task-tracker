@@ -1272,6 +1272,13 @@ def create_app():
     def tech_task(task_id):
         return render_template("technician_task.html", task_id=task_id)
 
+    @app.route("/tech/diag")
+    def tech_diag():
+        """Self-service device check. An operator's phone is the one place we can't
+        see a console, so the page reports its own storage, service worker and API
+        state on screen — no cable, no Mac, no guessing."""
+        return render_template("diag.html")
+
     @app.route("/tech/extra")
     def tech_extra():
         # Client page; the local job id is read from the URL fragment so the page
