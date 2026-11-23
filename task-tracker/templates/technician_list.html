@@ -16,6 +16,14 @@
   <div class="avatar-circle">{{ current_user.name[0] }}</div>
 </div>
 
+{# Shown only if this phone's IndexedDB is unusable. Without it the page used to
+   go blank and the Extra-job button did nothing, with no clue why. #}
+<div id="storage-warn" class="alert alert-warning py-2 d-none">
+  <strong>This phone can't save work offline.</strong>
+  Jobs and photos need a connection until it's fixed. Tell your manager — clearing this
+  app's data (or freeing up storage) usually sorts it.
+</div>
+
 <button id="shift-btn" class="btn btn-outline-success w-100 mb-3 shift-btn">START SHIFT</button>
 
 <div class="d-flex gap-2 mb-3">
@@ -134,22 +142,30 @@ async function refreshFromNetwork() {
   const res = await fetch("/api/tasks");
   if (!res.ok) return;
   const tasks = await res.json();
-  await TT.db.saveTasks(tasks);
-  // Reconcile: if the server already has an extra job (matched by key),
-  // mark the local copy synced so it isn't shown twice.
-  const byKey = {};
-  tasks.forEach((t) => { if (t.client_key) byKey[t.client_key] = t; });
-  for (const j of await TT.db.getLocalJobs()) {
-    if (!j.synced && byKey[j.localId]) {
-      j.synced = true; j.serverId = byKey[j.localId].id;
-      await TT.db.addLocalJob(j);
+  // Caching and reconciling are conveniences for being offline later; if this
+  // phone's store is broken they must not stop the list from being shown now.
+  try {
+    await TT.db.saveTasks(tasks);
+    // Reconcile: if the server already has an extra job (matched by key),
+    // mark the local copy synced so it isn't shown twice.
+    const byKey = {};
+    tasks.forEach((t) => { if (t.client_key) byKey[t.client_key] = t; });
+    for (const j of await TT.db.getLocalJobs()) {
+      if (!j.synced && byKey[j.localId]) {
+        j.synced = true; j.serverId = byKey[j.localId].id;
+        await TT.db.addLocalJob(j);
+      }
     }
+  } catch (e) {
+    showStorageWarning();
   }
   renderAll(tasks, await TT.db.getLocalJobs());
 }
 
 // Show cached tasks instantly, then refresh from network and re-cache.
 async function load() {
+  // These degrade to [] if the phone's store is broken, so a dead IndexedDB can
+  // no longer stop the list from loading from the network.
   const localJobs = await TT.db.getLocalJobs();
   const cached = await TT.db.getTasks();
   if (cached.length || localJobs.length) renderAll(cached, localJobs);
@@ -161,6 +177,12 @@ async function load() {
         '<div class="alert alert-info">Offline — no cached tasks yet.</div>';
     }
   }
+  if (TT.db.storageBroken && TT.db.storageBroken()) showStorageWarning();
+}
+
+function showStorageWarning() {
+  const el = document.getElementById("storage-warn");
+  if (el) el.classList.remove("d-none");
 }
 
 // Create an unplanned job (works offline; syncs later). kind: 'extra' | 'rent'.
@@ -170,10 +192,35 @@ async function createUnplanned(kind, promptText) {
   const localId = "x-" + ((self.crypto && crypto.randomUUID)
     ? crypto.randomUUID()
     : Date.now() + "-" + Math.random().toString(16).slice(2));
-  await TT.db.addLocalJob({
-    localId, title: note, status: "open", kind,
-    created_at: new Date().toISOString(), synced: false,
-  });
+  try {
+    await TT.db.addLocalJob({
+      localId, title: note, status: "open", kind,
+      created_at: new Date().toISOString(), synced: false,
+    });
+  } catch (e) {
+    // This phone's offline store is unusable. Rather than lose what he just
+    // typed, create the job straight on the server when there is a connection.
+    showStorageWarning();
+    if (!navigator.onLine) {
+      alert("This phone can't save offline and has no connection right now, so the "
+            + "job wasn't created. Try again once you're online.");
+      return;
+    }
+    try {
+      const res = await fetch("/api/tasks/extra", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title: note, timestamp: new Date().toISOString(),
+                               client_key: localId, kind }),
+      });
+      if (!res.ok) throw new Error("server said " + res.status);
+      await refreshFromNetwork();
+      return;
+    } catch (e2) {
+      alert("The job could not be created: " + e2.message);
+      return;
+    }
+  }
   TT.sync.run();   // create on the server now if online (otherwise later)
   location.href = "/tech/extra#" + encodeURIComponent(localId);
 }

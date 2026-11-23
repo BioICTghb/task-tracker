@@ -31,6 +31,11 @@
     });
   }
 
+  // Set once the phone's IndexedDB has failed (full storage, cleared/corrupt site
+  // data, private mode). Pages check it so a broken store degrades to online-only
+  // instead of silently killing the task list and the Extra-job button.
+  let broken = false;
+
   function tx(store, mode, fn) {
     return open().then(
       (db) =>
@@ -46,10 +51,16 @@
             req.onsuccess = () => { result = req.result; };
           }
           t.oncomplete = () => resolve(result);
-          t.onerror = () => reject(t.error);
-          t.onabort = () => reject(t.error);
+          t.onerror = () => { broken = true; reject(t.error); };
+          t.onabort = () => { broken = true; reject(t.error); };
         })
-    );
+    ).catch((e) => { broken = true; throw e; });
+  }
+
+  // Read helpers used on page load: a dead store must not take the page with it,
+  // so these answer with an empty result and raise the flag instead of throwing.
+  function txRead(store, fn, fallback) {
+    return tx(store, "readonly", fn).catch(() => fallback);
   }
 
   const api = {
@@ -61,10 +72,10 @@
       });
     },
     async getTasks() {
-      return tx("tasks", "readonly", (s) => s.getAll());
+      return txRead("tasks", (s) => s.getAll(), []);
     },
     async getTask(id) {
-      return tx("tasks", "readonly", (s) => s.get(Number(id)));
+      return txRead("tasks", (s) => s.get(Number(id)), undefined);
     },
     async setTaskStatus(id, status) {
       const t = await api.getTask(id);
@@ -78,7 +89,7 @@
       return tx("outbox", "readwrite", (s) => s.add(item));
     },
     async getOutbox() {
-      return tx("outbox", "readonly", (s) => s.getAll());
+      return txRead("outbox", (s) => s.getAll(), []);
     },
     async removeOutbox(key) {
       return tx("outbox", "readwrite", (s) => s.delete(key));
@@ -118,7 +129,7 @@
       return tx("localjobs", "readwrite", (s) => s.put(job));
     },
     async getLocalJobs() {
-      return tx("localjobs", "readonly", (s) => s.getAll());
+      return txRead("localjobs", (s) => s.getAll(), []);
     },
     async getLocalJob(localId) {
       return tx("localjobs", "readonly", (s) => s.get(localId));
@@ -133,6 +144,9 @@
       return tx("localjobs", "readwrite", (s) => s.delete(localId));
     },
   };
+
+  // True once the phone's offline store has failed; pages warn and carry on online.
+  api.storageBroken = () => broken;
 
   window.TT = window.TT || {};
   window.TT.db = api;
