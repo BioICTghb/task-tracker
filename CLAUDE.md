@@ -176,6 +176,15 @@ not affect the live site.
   a dead share never costs the week's figures. Column D (overtime ×1.5) is deliberately
   left empty for HR; a paid absence goes to column E at `ABSENCE_DAY_HOURS` with its code
   in column K. A missing rate leaves `Rate` **blank, not 0**, and warns by name.
+  The workbook is **not built from scratch**: it fills in `hr_template.xlsx`, a copy of
+  HR's own file with the names, hours and wages stripped and nothing else touched, so the
+  layout, colours, borders, widths and the two-decimal accounting formats are theirs and
+  cannot drift. Column A of `Total` is coloured **by row band** in their file (green, then
+  amber), so operators are filled top-down from `FIRST_ROW` and the colour code lands as
+  they set it. When they restyle (2027), drop the new file in and strip it the same way.
+  openpyxl stores no cached formula results, so `fullCalcOnLoad` is set - and a copy opened
+  in Protected View still shows formula cells blank until *Enable Editing*, which is Excel,
+  not the file.
 - **Shift-change warning**: `schedule_cells.updated_at` advances only on a real change
   (text or color), `users.schedule_seen_at` records acknowledgement;
   `/api/schedule-changes` → sticky banner on the operator list, cleared by

@@ -54,6 +54,15 @@ DEFAULT_SHARE_DIR = r"3_ebo_production\5_hr\Weekly hour exports"
 
 DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
 
+# A copy of HR's own workbook with the names, hours and wages stripped out: the export
+# fills this in, so the layout and colours are theirs and cannot drift.
+TEMPLATE = os.environ.get("HR_TEMPLATE", os.path.join(APP_DIR, "hr_template.xlsx"))
+
+# HR's accounting formats, both two decimals - used only by the hand-built fallback;
+# a filled template brings its own.
+FMT_HOURS = r'_-* #,##0.00_-;\-* #,##0.00_-;_-* "-"??_-;_-@_-'
+FMT_MONEY = r'_-[$€-2]\ * #,##0.00_-;\-[$€-2]\ * #,##0.00_-;_-[$€-2]\ * "-"??_-;_-@_-'
+
 # Columns B..G: (letter, group label, sub label, multiplier). Row 3 carries the
 # multipliers, and the Cost formula multiplies by whatever is in row 3 - so these
 # can be changed in the sheet without touching this file.
@@ -227,18 +236,35 @@ def _header(ws, week_no):
 
 
 def build_workbook(monday, rows):
+    """Fill in a copy of HR's own workbook.
+
+    The layout, colours, borders, column widths and number formats are HR's, taken from
+    hr_template.xlsx - a copy of their file with the names, hours and wages stripped out
+    and nothing else touched. Rebuilding all of that from scratch meant re-deriving it by
+    hand and drifting from the original every time they restyled something. When they
+    change the template (2027), drop the new one in and strip it the same way.
+
+    Column A on the Total sheet is coloured by row band in their file (green for the
+    first rows, amber below), so operators are filled top-down from FIRST_ROW and the
+    colour code lands exactly as they set it.
+    """
     import openpyxl
 
     week_no = monday.isocalendar()[1]
-    wb = openpyxl.Workbook()
-    total = wb.active
-    total.title = "Total"
-    sheets = {}
-    for d in DAYS:
-        sheets[d] = wb.create_sheet(d)
-
-    for ws in [total] + [sheets[d] for d in DAYS]:
-        _header(ws, week_no)
+    if os.path.exists(TEMPLATE):
+        wb = openpyxl.load_workbook(TEMPLATE)
+        total = wb["Total"]
+        sheets = {d: wb[d] for d in DAYS}
+        total["B1"] = "WEEK %d" % week_no
+    else:
+        # No template on this machine: build the layout by hand so an export is still
+        # possible, just not pixel-identical to theirs.
+        wb = openpyxl.Workbook()
+        total = wb.active
+        total.title = "Total"
+        sheets = {d: wb.create_sheet(d) for d in DAYS}
+        for ws in [total] + [sheets[d] for d in DAYS]:
+            _header(ws, week_no)
 
     for i, entry in enumerate(rows):
         r = FIRST_ROW + i
@@ -246,15 +272,15 @@ def build_workbook(monday, rows):
             break
         for ws in [total] + [sheets[d] for d in DAYS]:
             ws["A%d" % r] = entry["name"]
-            ws["I%d" % r] = entry["rate"] if entry["rate"] is not None else None
+            # Two decimals, never a long binary tail like 22.989999999999998.
+            ws["I%d" % r] = (round(entry["rate"], 2)
+                             if entry["rate"] is not None else None)
         for day_i, day_name in enumerate(DAYS):
             ws = sheets[day_name]
             placed = entry["days"].get(day_i)
             if placed:
                 letter, hours, note = placed
-                ws["%s%d" % (letter, r)] = hours
-                # The roster code itself, so HR can see why a day landed where it did.
-                ws["%s%d" % (letter, r)].comment = None
+                ws["%s%d" % (letter, r)] = round(hours, 2)
                 if letter == "E":
                     ws["K%d" % r] = note
         # Same formulas as HR's file, so edited cells still recalculate.
@@ -265,18 +291,33 @@ def build_workbook(monday, rows):
         for letter in "BCDEFGHJ":
             total["%s%d" % (letter, r)] = "=" + "+".join(
                 "%s!%s%d" % (d, letter, r) for d in DAYS)
+        if not os.path.exists(TEMPLATE):
+            # The template supplies these; without it, set them so hours and money still
+            # show two decimals rather than Excel's General format.
+            for ws in [total] + [sheets[d] for d in DAYS]:
+                for letter in "BCDEFGH":
+                    ws["%s%d" % (letter, r)].number_format = FMT_HOURS
+                for letter in "IJ":
+                    ws["%s%d" % (letter, r)].number_format = FMT_MONEY
         # Guarded, unlike the original: an operator with no hours showed #DIV/0!
         total["I%d" % r] = '=IFERROR(J%d/H%d,"")' % (r, r)
 
-    for ws in [total] + [sheets[d] for d in DAYS]:
-        ws["A%d" % TOTAL_ROW] = "Total"
-        for letter in "BCDEFGHIJ":
-            ws["%s%d" % (letter, TOTAL_ROW)] = "=SUM(%s%d:%s%d)" % (
-                letter, FIRST_ROW, letter, LAST_ROW)
-    total["E28"] = "Dayshift 100% is holiday pay OR Bank Holiday"
-    total["E29"] = ("Day 1.5 is overtime and is left empty by the export - fill it in by hand.")
-    total["E30"] = ("Hours come from the roster. A code such as ADV/FD/Sick/SOL counts as "
-                    "%.1f h of holiday pay; the code is shown in column K." % _absence_hours())
+    # The template already carries the Total row, the per-row formulas and HR's own
+    # legend, so only the hand-built fallback needs them written.
+    if not os.path.exists(TEMPLATE):
+        for ws in [total] + [sheets[d] for d in DAYS]:
+            ws["A%d" % TOTAL_ROW] = "Total"
+            for letter in "BCDEFGHIJ":
+                ws["%s%d" % (letter, TOTAL_ROW)] = "=SUM(%s%d:%s%d)" % (
+                    letter, FIRST_ROW, letter, LAST_ROW)
+        total["E28"] = "Dayshift 100% is holiday pay OR Bank Holiday"
+        total["E29"] = "Day 1.5 is overtime and is left empty by the export - fill it in by hand."
+        total["E30"] = ("Hours come from the roster. A code such as ADV/FD/Sick/SOL counts as "
+                        "%.1f h of holiday pay; the code is shown in column K." % _absence_hours())
+    # Excel shows nothing for a formula until it calculates, and openpyxl stores no
+    # cached result, so ask for a full recalculation the moment the file opens.
+    if wb.calculation is not None:
+        wb.calculation.fullCalcOnLoad = True
     return wb
 
 
