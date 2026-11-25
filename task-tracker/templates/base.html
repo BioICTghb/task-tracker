@@ -38,7 +38,7 @@
   <div class="container d-flex justify-content-between align-items-center pt-2 small no-print">
     <span class="text-muted">{{ current_user.name }}{% if current_user.role != 'technician' %} · {{ current_user.role|capitalize }}{% endif %}</span>
     <span>
-      {% if current_user.role != 'technician' %}
+      {% if is_manager %}
         <a href="/" class="me-3">Home</a>
         <a href="/manage/tasks" class="me-3">Edit tasks</a>
         <a href="/schedule" class="me-3">Schedule</a>
@@ -46,6 +46,7 @@
         <a href="/report" class="me-3">Report</a>
         <a href="/admin" class="me-3">Operators</a>
       {% endif %}
+      {% if can_edit_rates %}<a href="/hr/rates" class="me-3">Hourly rates</a>{% endif %}
       <button type="button" id="theme-toggle" class="btn btn-link btn-sm p-0 align-baseline me-3" aria-label="Toggle dark mode" title="Toggle dark mode">
         <svg id="theme-toggle-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></svg>
       </button>

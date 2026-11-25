@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% block title %}Hourly rates{% endblock %}
+
+{% block content %}
+<h1 class="h3 mb-1">Hourly rates</h1>
+<p class="text-muted small">
+  The base hourly rate for each operator, used by the weekly hours export. The shift
+  multipliers (day 1.1, night 1.3, weekend 2, holiday 1) are applied on top of this in the
+  export — enter the plain rate here.
+</p>
+
+{% if msg %}<div class="alert alert-success py-2">{{ msg }}</div>{% endif %}
+
+<form method="post" action="/hr/rates">
+  <table class="table align-middle" style="max-width:40rem">
+    <thead class="table-light">
+      <tr><th>Operator</th><th style="width:10rem">Rate / hour</th><th>Last changed</th></tr>
+    </thead>
+    <tbody>
+      {% for o in operators %}
+      <tr>
+        <td>{{ o.display_name }}</td>
+        <td>
+          <div class="input-group input-group-sm">
+            <span class="input-group-text">&euro;</span>
+            {# Left blank = unchanged, so a half-filled form can't wipe a rate. #}
+            <input name="rate_{{ o.id }}" value="{{ '%.2f'|format(o.rate) if o.rate is not none else '' }}"
+                   class="form-control" inputmode="decimal" placeholder="—">
+          </div>
+        </td>
+        <td class="small text-muted">
+          {%- if o.updated_at %}{{ o.updated_at }}{% if o.updated_by %} by {{ o.updated_by }}{% endif %}
+          {%- else %}never set{% endif -%}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  <button class="btn btn-primary">Save rates</button>
+</form>
+
+<p class="text-muted small mt-3">
+  An empty box leaves that rate as it was. Operators never see this page, and the rates do
+  not appear anywhere else in the app.
+</p>
+{% endblock %}

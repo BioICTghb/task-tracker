@@ -77,7 +77,13 @@ not affect the live site.
   The **"Still in progress"** list is deliberately *not* date-filtered — `status='started'`
   is a current state, so it shows every unfinished job whenever it began (oldest first,
   with an "Open for" age, ≥7 days in red). Don't re-add a date range to `fetch_started()`.
-- Roles: `manager` + `developer` are manager-level (`MANAGER_ROLES`); `technician` = operator.
+- Roles: `manager` + `developer` are manager-level (`MANAGER_ROLES`); `technician` = operator;
+  `hr` sees **only** `/hr/rates`. `developer` deliberately has access to everything.
+  Wages are limited to `RATE_ROLES` (`hr` + `developer`) — a plain `manager` cannot see
+  them, and rates live in their own `pay_rates` table so they never ride along in
+  ordinary user queries or appear on any other page. Nav is gated on the injected
+  `is_manager` / `can_edit_rates`, never on `role != 'technician'` (that showed HR the
+  operational pages).
   `ROLE_LABELS` is the vocabulary — label from it, never `'Manager' if role=='manager'
   else 'Operator'`, which silently demoted developers in the UI. Roles are assignable on
   create and changeable at `/admin/users/<id>/role`; guards refuse to strip your own

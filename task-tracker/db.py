@@ -76,6 +76,19 @@ def _sqlite_init_schema(conn):
     )
     conn.execute(
         """
+        CREATE TABLE IF NOT EXISTS pay_rates (
+          -- Hourly rate per operator, for the weekly HR hours export. Its own
+          -- table, so wages never ride along in ordinary queries about users, and
+          -- only the HR role (and the developer) can read or write it.
+          user_id INTEGER PRIMARY KEY,
+          rate REAL NOT NULL,
+          updated_at TIMESTAMP,
+          updated_by TEXT
+        );
+        """
+    )
+    conn.execute(
+        """
         CREATE TABLE IF NOT EXISTS shift_colors (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
           -- '#rrggbb', lowercase. Matched against a cell's fill by nearest colour,

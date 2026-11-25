@@ -49,7 +49,17 @@ MANAGER_ROLES = {"manager", "developer"}
 
 # Assignable roles and how they're labelled. 'developer' is manager-level with a
 # different title, so it must never be presented as an operator.
-ROLE_LABELS = {"manager": "Manager", "developer": "Developer", "technician": "Operator"}
+ROLE_LABELS = {"manager": "Manager", "developer": "Developer", "technician": "Operator",
+               "hr": "HR"}
+
+# Who may see and edit the hourly rates. Deliberately NOT every manager: a wage is
+# not operational information, and the fewer logins that can read it the better.
+RATE_ROLES = {"hr", "developer"}
+
+# Hours credited for a paid absence day (ADV / FD / Sick / SOL). Those roster cells
+# carry a code and no number, so the length has to come from somewhere: a standard
+# day. Overridden per week by HR in the sheet if a day was really longer.
+ABSENCE_DAY_HOURS = 7.6
 
 # Work-schedule grid columns (C1-C12), fixed order matching the Excel sheet
 # managers currently keep shifts in.
@@ -339,7 +349,64 @@ def create_app():
 
     @app.context_processor
     def inject_user():
-        return {"current_user": current_user()}
+        u = current_user() or {}
+        role = u.get("role")
+        return {"current_user": current_user(),
+                # Templates must not re-implement who counts as a manager: HR is
+                # not a technician but must not see the operational pages either.
+                "is_manager": role in MANAGER_ROLES,
+                "can_edit_rates": role in RATE_ROLES}
+
+    def rates_required(fn):
+        @wraps(fn)
+        def wrapper(*a, **kw):
+            u = current_user() or {}
+            if u.get("role") not in RATE_ROLES:
+                abort(403)
+            return fn(*a, **kw)
+        return wrapper
+
+    @app.route("/hr/rates")
+    @rates_required
+    def hr_rates():
+        """The only page the HR login needs: each operator's hourly rate."""
+        rows = db.query(
+            "SELECT u.id, u.display_name, p.rate, p.updated_at, p.updated_by "
+            "FROM users u LEFT JOIN pay_rates p ON p.user_id = u.id "
+            "WHERE u.role='technician' AND u.active=1 ORDER BY u.display_name")
+        return render_template("hr_rates.html", operators=rows,
+                               msg=request.args.get("msg"))
+
+    @app.route("/hr/rates", methods=["POST"])
+    @rates_required
+    def hr_rates_save():
+        who = (current_user() or {}).get("name")
+        now = now_local().strftime("%Y-%m-%d %H:%M:%S")
+        saved, bad = 0, []
+        for u in db.query("SELECT id, display_name FROM users "
+                          "WHERE role='technician' AND active=1"):
+            raw = (request.form.get("rate_%d" % u["id"]) or "").strip().replace(",", ".")
+            if raw == "":
+                continue
+            try:
+                rate = round(float(raw), 4)
+            except ValueError:
+                bad.append(u["display_name"])
+                continue
+            if rate < 0 or rate > 1000:          # a typo, not a wage
+                bad.append(u["display_name"])
+                continue
+            if db.query("SELECT 1 FROM pay_rates WHERE user_id=%s", (u["id"],), one=True):
+                db.execute("UPDATE pay_rates SET rate=%s, updated_at=%s, updated_by=%s "
+                           "WHERE user_id=%s", (rate, now, who, u["id"]))
+            else:
+                db.execute("INSERT INTO pay_rates (user_id, rate, updated_at, updated_by) "
+                           "VALUES (%s, %s, %s, %s)", (u["id"], rate, now, who))
+            saved += 1
+        msg = "Saved %d rate%s." % (saved, "" if saved == 1 else "s")
+        if bad:
+            msg += " Not a valid amount, so left unchanged: %s." % ", ".join(bad)
+        return redirect(url_for("hr_rates", msg=msg))
 
     @app.before_request
     def require_login():
@@ -440,9 +507,13 @@ def create_app():
 
     @app.route("/")
     def index():
-        # Role drives the landing page; technicians never see the publish/report side.
-        if current_user().get("role") == "technician":
+        # Role drives the landing page; technicians never see the publish/report side,
+        # and the HR login goes straight to the only page it has.
+        role = current_user().get("role")
+        if role == "technician":
             return redirect(url_for("tech_list"))
+        if role == "hr":
+            return redirect(url_for("hr_rates"))
         ensure_todays_dailies()
         # Operators for the "@" mention autocomplete in the publish box.
         return render_template("manager.html", operators=active_operators())
