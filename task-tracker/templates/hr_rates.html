@@ -39,6 +39,31 @@
   <button class="btn btn-primary">Save rates</button>
 </form>
 
+<hr class="my-4">
+
+<h2 class="h5 mb-1">Weekly hours</h2>
+<p class="text-muted small mb-2">
+  The workbook is emailed every Tuesday morning for the week that just ended. You can also
+  download any week here — it is built fresh from the roster each time, so saving a rate
+  above and downloading again picks up the new figure.
+</p>
+<form method="get" action="/hr/export" class="d-flex flex-wrap gap-2 align-items-end">
+  <div>
+    <label class="form-label small mb-0">Week number</label>
+    <input name="week" value="{{ last_week }}" class="form-control form-control-sm" style="width:7rem" inputmode="numeric">
+  </div>
+  <div>
+    <label class="form-label small mb-0">Year</label>
+    <input name="year" value="{{ last_week_year }}" class="form-control form-control-sm" style="width:7rem" inputmode="numeric">
+  </div>
+  <button class="btn btn-outline-primary btn-sm">Download .xlsx</button>
+</form>
+<p class="text-muted small mt-2">
+  Hours come from the roster. <strong>Overtime (Day 1.5) is left empty</strong> for you to fill
+  in, and a day off (ADV, FD, Sick, SOL) is credited as {{ absence_hours }} h of holiday pay with
+  the code shown in column K.
+</p>
+
 <p class="text-muted small mt-3">
   An empty box leaves that rate as it was. Operators never see this page, and the rates do
   not appear anywhere else in the app.

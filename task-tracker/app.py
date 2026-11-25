@@ -374,8 +374,35 @@ def create_app():
             "SELECT u.id, u.display_name, p.rate, p.updated_at, p.updated_by "
             "FROM users u LEFT JOIN pay_rates p ON p.user_id = u.id "
             "WHERE u.role='technician' AND u.active=1 ORDER BY u.display_name")
+        import hr_export
+        last = hr_export.monday_of_last_week(now_local().date()).isocalendar()
         return render_template("hr_rates.html", operators=rows,
-                               msg=request.args.get("msg"))
+                               msg=request.args.get("msg"),
+                               last_week=last[1], last_week_year=last[0],
+                               absence_hours=ABSENCE_DAY_HOURS)
+
+    @app.route("/hr/export")
+    @rates_required
+    def hr_export_download():
+        """Download any week's hours workbook on demand. Behind rates_required
+        because the file contains wages."""
+        import hr_export
+        try:
+            week = int(request.args.get("week") or 0)
+            year = int(request.args.get("year") or now_local().year)
+        except ValueError:
+            return redirect(url_for("hr_rates", msg="That isn't a week number."))
+        monday = (hr_export.monday_of_iso_week(year, week) if week
+                  else hr_export.monday_of_last_week(now_local().date()))
+        try:
+            ok, summary, path, warnings = hr_export.run_export(monday=monday, mail=False)
+        except Exception as e:
+            return redirect(url_for("hr_rates",
+                                    msg="Export failed: %s: %s" % (type(e).__name__, e)))
+        if not ok:
+            return redirect(url_for("hr_rates", msg=summary))
+        return send_file(path, as_attachment=True,
+                         download_name=os.path.basename(path))
 
     @app.route("/hr/rates", methods=["POST"])
     @rates_required
