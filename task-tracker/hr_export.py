@@ -302,6 +302,11 @@ def build_workbook(monday, rows):
         # Guarded, unlike the original: an operator with no hours showed #DIV/0!
         total["I%d" % r] = '=IFERROR(J%d/H%d,"")' % (r, r)
 
+    # Rows nobody filled still carry the template's bare "=J/H" rate, which is
+    # #DIV/0! on zero hours. Clear it: an empty row should look empty, not broken.
+    for r in range(FIRST_ROW + len(rows), LAST_ROW + 1):
+        total["I%d" % r] = None
+
     # The template already carries the Total row, the per-row formulas and HR's own
     # legend, so only the hand-built fallback needs them written.
     if not os.path.exists(TEMPLATE):
