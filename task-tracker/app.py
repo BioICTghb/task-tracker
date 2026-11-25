@@ -379,7 +379,10 @@ def create_app():
         return render_template("hr_rates.html", operators=rows,
                                msg=request.args.get("msg"),
                                last_week=last[1], last_week_year=last[0],
-                               absence_hours=ABSENCE_DAY_HOURS)
+                               absence_hours=ABSENCE_DAY_HOURS,
+                               share_dir="L:\\" + (
+                                   hr_export.load_env_file(hr_export.SHARE_CONFIG)
+                                   .get("HR_SHARE_DIR") or hr_export.DEFAULT_SHARE_DIR))
 
     @app.route("/hr/export")
     @rates_required

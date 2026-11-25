@@ -43,9 +43,11 @@
 
 <h2 class="h5 mb-1">Weekly hours</h2>
 <p class="text-muted small mb-2">
-  The workbook is emailed every Tuesday morning for the week that just ended. You can also
-  download any week here — it is built fresh from the roster each time, so saving a rate
-  above and downloading again picks up the new figure.
+  Every Tuesday morning the workbook for the week that just ended is placed in
+  <code>{{ share_dir }}</code> on the L: drive. You can also download any week here — it is
+  built fresh from the roster each time, so saving a rate above and downloading again picks
+  up the new figure. A week already in that folder is never overwritten, so anything typed
+  into it by hand is safe; a re-run lands beside it with the date in the name.
 </p>
 <form method="get" action="/hr/export" class="d-flex flex-wrap gap-2 align-items-end">
   <div>

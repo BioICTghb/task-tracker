@@ -165,6 +165,17 @@ not affect the live site.
   Every run, including a refusal, is recorded in `import_runs` and shown on `/schedule`.
   Writes go through `schedule_io.apply_week()`, shared with nothing else, so the
   change-detection that drives the operator banner has one implementation.
+- **Weekly HR hours export** (`hr_export.py`, Tuesday cron): rebuilds HR's "Weekly Hours
+  Tracker" workbook for the week that just ended, from the **roster** — not the shift
+  clock, which too few operators use to pay from. Delivery is a **folder on the share**
+  (`L:\3_ebo_production\5_hr\Weekly hour exports`, `HR_SHARE_DIR`), reusing the roster's
+  SMB credentials in `~/.roster.env`; email exists (`--mail`) but is off by default and
+  not the chosen route. A week **already in that folder is never overwritten** — HR type
+  overtime into column D by hand, so a re-run writes `… (rebuilt <date>).xlsx` beside it
+  and says so. The local copy under `~/hr-exports` is written *first* and always kept, so
+  a dead share never costs the week's figures. Column D (overtime ×1.5) is deliberately
+  left empty for HR; a paid absence goes to column E at `ABSENCE_DAY_HOURS` with its code
+  in column K. A missing rate leaves `Rate` **blank, not 0**, and warns by name.
 - **Shift-change warning**: `schedule_cells.updated_at` advances only on a real change
   (text or color), `users.schedule_seen_at` records acknowledgement;
   `/api/schedule-changes` → sticky banner on the operator list, cleared by

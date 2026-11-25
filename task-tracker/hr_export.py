@@ -18,11 +18,18 @@ Category per operator per day (columns B..G):
     paid absence (ADV/FD/Sick/...)  -> E  (x1)    "holiday pay or bank holiday"
     column D (x1.5) is overtime     -> left empty on purpose, HR fills it in
 
+The finished workbook is **placed in a folder on the share** (the same server the
+roster is read from, credentials in ~/.roster.env), which is how HR picks it up. It is
+never silently overwritten: HR types overtime into column D by hand, so if the file for
+that week is already there, a re-run writes a dated copy beside it instead of destroying
+their work. Mailing it is still possible (--mail) but off by default.
+
 Usage:
     python hr_export.py                 # the week that just ended (run on a Tuesday)
     python hr_export.py --week 46       # a specific ISO week of this year
     python hr_export.py --start 2026-11-16
-    python hr_export.py --no-mail       # write the file, send nothing
+    python hr_export.py --no-publish    # write it locally only, touch the share not at all
+    python hr_export.py --mail --to me@example.com    # also email it
 """
 import argparse
 import datetime
@@ -37,6 +44,13 @@ sys.path.insert(0, APP_DIR)
 
 MAIL_CONFIG = os.environ.get("HR_MAIL_ENV", os.path.expanduser("~/.hrmail.env"))
 OUT_DIR = os.environ.get("HR_EXPORT_DIR", os.path.expanduser("~/hr-exports"))
+
+# The share credentials already live in ~/.roster.env (the roster is read from the same
+# server), so publishing reuses them rather than asking for a second copy of a password.
+SHARE_CONFIG = os.environ.get("HR_SHARE_ENV", os.path.expanduser("~/.roster.env"))
+# Folder inside the share, i.e. L:\3_ebo_production\5_hr\Weekly hour exports.
+# Override with HR_SHARE_DIR in ~/.roster.env when HR move it.
+DEFAULT_SHARE_DIR = r"3_ebo_production\5_hr\Weekly hour exports"
 
 DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
 
@@ -56,7 +70,8 @@ LAST_ROW = 24               # Total row sums FIRST_ROW..LAST_ROW, as in HR's fil
 TOTAL_ROW = 25
 
 
-def load_mail_config(path=MAIL_CONFIG):
+def load_env_file(path):
+    """Read a KEY=value file. Missing file is not an error - the caller decides."""
     cfg = {}
     if not os.path.exists(path):
         return cfg
@@ -67,6 +82,52 @@ def load_mail_config(path=MAIL_CONFIG):
                 k, v = ln.split("=", 1)
                 cfg[k.strip()] = v.strip()
     return cfg
+
+
+def load_mail_config(path=MAIL_CONFIG):
+    return load_env_file(path)
+
+
+def publish_to_share(path, cfg=None):
+    """Copy the finished workbook into HR's folder on the share.
+
+    Never overwrites: HR fill in the overtime column by hand, so an existing file for
+    that week is treated as theirs. A re-run lands beside it with a timestamp, and the
+    caller reports that so nobody assumes the first file was refreshed.
+    """
+    cfg = cfg if cfg is not None else load_env_file(SHARE_CONFIG)
+    host = cfg.get("HR_SHARE_HOST") or cfg.get("ROSTER_SMB_HOST")
+    share = cfg.get("HR_SHARE_SHARE") or cfg.get("ROSTER_SMB_SHARE")
+    user = cfg.get("HR_SHARE_USER") or cfg.get("ROSTER_SMB_USER")
+    password = cfg.get("HR_SHARE_PASSWORD") or cfg.get("ROSTER_SMB_PASSWORD")
+    folder = cfg.get("HR_SHARE_DIR") or DEFAULT_SHARE_DIR
+    if not (host and share and user and password):
+        return False, "share not configured (need ROSTER_SMB_* in %s) - local file only" % SHARE_CONFIG
+
+    import smbclient
+    smbclient.register_session(host, username=user, password=password)
+    base = "\\\\%s\\%s\\%s" % (host, share, folder.strip("\\/").replace("/", "\\"))
+    try:
+        smbclient.makedirs(base, exist_ok=True)
+    except Exception:
+        pass            # already there, or no permission to create - the write will say
+    name = os.path.basename(path)
+    dest = base + "\\" + name
+    try:
+        exists = smbclient.path.exists(dest)
+    except Exception:
+        exists = False
+    note = "placed in %s" % folder
+    if exists:
+        stamp = datetime.datetime.now().strftime("%Y-%m-%d %H%M")
+        name = "%s (rebuilt %s)%s" % (os.path.splitext(name)[0], stamp,
+                                      os.path.splitext(name)[1])
+        dest = base + "\\" + name
+        note = "%s already there and left untouched - wrote %s beside it" % (
+            os.path.basename(path), name)
+    with open(path, "rb") as src, smbclient.open_file(dest, mode="wb") as out:
+        out.write(src.read())
+    return True, note
 
 
 def monday_of_last_week(today=None):
@@ -266,7 +327,7 @@ def send_mail(cfg, path, monday, rows, warnings):
     return True, "emailed to %s" % ", ".join(to)
 
 
-def run_export(monday=None, mail=True, out_dir=OUT_DIR, to=None):
+def run_export(monday=None, mail=False, out_dir=OUT_DIR, to=None, publish=True):
     monday = monday or monday_of_last_week()
     rows, warnings = build_rows(monday)
     if not rows:
@@ -276,6 +337,18 @@ def run_export(monday=None, mail=True, out_dir=OUT_DIR, to=None):
     name = "Weekly Hours Tracker W%d %d.xlsx" % (monday.isocalendar()[1], monday.isocalendar()[0])
     path = os.path.join(out_dir, name)
     wb.save(path)
+
+    # The local copy under ~/hr-exports is written first and always kept, so a share
+    # that is down or full never costs you the week's figures.
+    notes = []
+    if publish:
+        try:
+            _, pnote = publish_to_share(path)
+        except Exception as e:
+            pnote = "share write FAILED (%s: %s) - the file is still at %s" % (
+                type(e).__name__, e, path)
+            warnings.append(pnote)
+        notes.append(pnote)
 
     note = "not mailed"
     if mail:
@@ -288,8 +361,10 @@ def run_export(monday=None, mail=True, out_dir=OUT_DIR, to=None):
         except Exception as e:
             note = "mail FAILED (%s: %s) - the file is still at %s" % (type(e).__name__, e, path)
             warnings.append(note)
+        notes.append(note)
     summary = "Week %d: %d operators, %s; %s" % (
-        monday.isocalendar()[1], len(rows), os.path.basename(path), note)
+        monday.isocalendar()[1], len(rows), os.path.basename(path),
+        "; ".join(notes) or "local file only")
     return True, summary, path, warnings
 
 
@@ -298,8 +373,10 @@ def main():
     ap.add_argument("--week", type=int, help="ISO week number (default: the week that just ended)")
     ap.add_argument("--year", type=int, default=datetime.date.today().year)
     ap.add_argument("--start", help="YYYY-MM-DD inside the week to export")
-    ap.add_argument("--no-mail", action="store_true", help="write the file, send nothing")
-    ap.add_argument("--to", help="send to this address instead of HR (for testing)")
+    ap.add_argument("--no-publish", action="store_true",
+                    help="write the file locally only, do not touch the share")
+    ap.add_argument("--mail", action="store_true", help="also email it (off by default)")
+    ap.add_argument("--to", help="email it to this address instead of HR (for testing)")
     a = ap.parse_args()
     if a.week:
         monday = monday_of_iso_week(a.year, a.week)
@@ -308,7 +385,8 @@ def main():
         monday = d - datetime.timedelta(days=d.weekday())
     else:
         monday = monday_of_last_week()
-    ok, summary, path, warnings = run_export(monday=monday, mail=not a.no_mail, to=a.to)
+    ok, summary, path, warnings = run_export(monday=monday, mail=a.mail or bool(a.to),
+                                             to=a.to, publish=not a.no_publish)
     for w in warnings:
         print("  warning:", w)
     print(("OK: " if ok else "FAILED: ") + summary)
