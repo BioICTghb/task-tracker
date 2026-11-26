@@ -178,7 +178,15 @@ def run_import(weeks=8, dry_run=False, force=False, year=None, today=None):
             try:
                 data, unc = fetch_workbook(cfg, y)
             except Exception as e:
-                warnings.append("could not read the %s workbook (%s: %s)" % (y, type(e).__name__, e))
+                text = str(e)
+                if "another process" in text or "0xc0000043" in text:
+                    # Much the commonest failure: somebody has the master open in
+                    # Excel, which takes a deny-read lock over SMB.
+                    warnings.append("%s: somebody has the master workbook open in Excel, so it "
+                                    "could not be read - those dates were left untouched" % y)
+                else:
+                    warnings.append("could not read the %s workbook (%s: %s)"
+                                    % (y, type(e).__name__, text))
                 continue
             if data[:4] != b"PK\x03\x04":
                 warnings.append("the %s workbook is still protected/encrypted - cannot read it" % y)
@@ -231,30 +239,43 @@ def run_import(weeks=8, dry_run=False, force=False, year=None, today=None):
                     % (matched, MIN_NAMES_MATCHED), warnings, detail)
 
         # Build the weeks, then decide whether to write them.
-        planned, missing_days = [], 0
+        planned, missing_days, unreadable_days = [], 0, 0
         for wstart in range(0, len(window), 7):
             days = window[wstart:wstart + 7]
-            rows = []
+            iso, rows = [], []
             for d in days:
-                row = [{"text": "", "color": ""} for _ in columns]
                 entry = sheets.get(year or d.year)
-                if entry:
-                    ws_v, ws_s, found, rowof = entry
-                    r = rowof.get((d.month, d.day))
-                    if r is None:
-                        missing_days += 1
-                    else:
-                        for c, lbl in found.items():
-                            idx = by_label.get(lbl)
-                            if idx is None:
-                                continue
-                            row[idx] = {"text": cell_text(ws_v.cell(row=r, column=c).value),
-                                        "color": cell_color(ws_s.cell(row=r, column=c))}
+                if entry is None:
+                    # That year's workbook could not be read at all. A day with no
+                    # source is NOT an empty day: writing blanks here wiped a whole
+                    # year's roster the moment somebody had the file open in Excel.
+                    unreadable_days += 1
+                    continue
+                ws_v, ws_s, found, rowof = entry
+                r = rowof.get((d.month, d.day))
+                if r is None:
+                    missing_days += 1
+                    continue            # likewise: no row means no information
+                row = [{"text": "", "color": ""} for _ in columns]
+                for c, lbl in found.items():
+                    idx = by_label.get(lbl)
+                    if idx is None:
+                        continue
+                    row[idx] = {"text": cell_text(ws_v.cell(row=r, column=c).value),
+                                "color": cell_color(ws_s.cell(row=r, column=c))}
+                iso.append(d.isoformat())
                 rows.append(row)
-            planned.append(([d.isoformat() for d in days], rows))
+            if rows:
+                planned.append((iso, rows))
         if missing_days:
             warnings.append("%d day(s) in the window have no row in the sheet - left untouched"
                             % missing_days)
+        if unreadable_days:
+            warnings.append("%d day(s) fall in a year whose workbook could not be read - "
+                            "left untouched" % unreadable_days)
+        if not planned:
+            return (False, "Nothing could be read for any day in the window - nothing was "
+                           "changed.", warnings, detail)
 
         now_iso = m.now_local().isoformat(timespec="microseconds")
         today_iso = today.isoformat()
@@ -273,8 +294,13 @@ def run_import(weeks=8, dry_run=False, force=False, year=None, today=None):
             if frac > MAX_OVERWRITE_FRACTION:
                 return (False, "Refused: the import would overwrite %d of the %d shifts already "
                                "in this window (%.0f%%), far more than expected. Check the "
-                               "spreadsheet - nothing was written."
-                        % (overwritten, existing, frac * 100), warnings, detail)
+                               "spreadsheet - nothing was written.%s"
+                        % (overwritten, existing, frac * 100,
+                           # Name the likeliest cause in the summary rather than leaving
+                           # it buried in the warnings, where it went unread once already.
+                           " Note: %d day(s) could not be read at all - see the warnings."
+                           % unreadable_days if unreadable_days else ""),
+                        warnings, detail)
 
         if dry_run:
             return (True, "Dry run: would change %d of %d cells over %d weeks "

@@ -163,6 +163,12 @@ not affect the live site.
   if it would overwrite more than `MAX_OVERWRITE_FRACTION` of the shifts *already* stored
   (counting overwrites, not changes — the first import legitimately fills everything).
   Every run, including a refusal, is recorded in `import_runs` and shown on `/schedule`.
+  **A day with no readable source is skipped, never written blank.** If a year's workbook
+  cannot be read (someone has the master open in Excel - SMB takes a deny-read lock) or a
+  date has no row in the sheet, those dates are left untouched and warned about. Treating
+  an unreadable year as "all cells empty" is what made the import try to wipe 149 of 157
+  shifts on 26 Nov 2026; only the safety gate stopped it. The gate is the second line of
+  defence, not the first - never hand `apply_week()` a blank row you did not actually read.
   Writes go through `schedule_io.apply_week()`, shared with nothing else, so the
   change-detection that drives the operator banner has one implementation.
 - **Weekly HR hours export** (`hr_export.py`, Tuesday cron): rebuilds HR's "Weekly Hours
