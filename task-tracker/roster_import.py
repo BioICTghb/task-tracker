@@ -38,6 +38,11 @@ MIN_NAMES_MATCHED = 5            # fewer than this => the template probably chan
 # weeks is routine and must not trip the gate (the very first import fills
 # everything); rewriting a roster that is already there is the dangerous case.
 MAX_OVERWRITE_FRACTION = 0.40
+# Weeks of the recent past to re-read each run. Rosters here get adjusted well after the
+# fact, so roughly two months of history is re-read every night rather than trusting that
+# a past week is settled. Past dates never raise the operators' "your shift changed"
+# banner - apply_week only notifies from today onward.
+WEEKS_BACK = int(os.environ.get("ROSTER_WEEKS_BACK", "9"))
 MIN_EXISTING_TO_JUDGE = 20       # too little history to draw any conclusion from
 
 # Headings in the sheet that label a legend or a section rather than a person. Kept
@@ -150,7 +155,41 @@ def find_layout(ws, labels):
     return header_row, date_col, best[2]
 
 
-def run_import(weeks=8, dry_run=False, force=False, year=None, today=None):
+#: Marks a run that did not see the whole roster, so an hourly retry has something to do.
+INCOMPLETE_MARK = "could not be read"
+
+
+def last_run_incomplete():
+    """True if the most recent run was refused, or could not read some dates.
+
+    Lets an hourly retry cost nothing when there is nothing to retry: the master is
+    usually only locked for a few minutes while somebody edits it, and hammering the
+    share every hour regardless would be rude and would hide the real state.
+    """
+    import app as m
+    import db
+    with m.app.app_context():
+        row = db.query("SELECT ok, warnings FROM import_runs ORDER BY id DESC LIMIT 1",
+                       one=True)
+    if not row:
+        return True                      # never run: there is work to do
+    if not row["ok"]:
+        return True
+    return INCOMPLETE_MARK in (row["warnings"] or "")
+
+
+def _already_exported(year, week):
+    """True if the hours export has produced a file for that week already."""
+    try:
+        import hr_export
+        return os.path.exists(os.path.join(
+            hr_export.OUT_DIR, "Weekly Hours Tracker W%d %d.xlsx" % (week, year)))
+    except Exception:
+        return False
+
+
+def run_import(weeks=8, dry_run=False, force=False, year=None, today=None,
+               weeks_back=WEEKS_BACK):
     """Import the roster. Returns (ok, summary, warnings, detail)."""
     import openpyxl
     import app as m
@@ -162,7 +201,12 @@ def run_import(weeks=8, dry_run=False, force=False, year=None, today=None):
     ignore_extra = {norm(x) for x in (cfg.get("ROSTER_IGNORE_LABELS") or "").split(",") if x.strip()}
     today = today or datetime.date.today()
     monday = today - datetime.timedelta(days=today.weekday())
-    window = [monday + datetime.timedelta(days=i) for i in range(weeks * 7)]
+    # Start WEEKS_BACK weeks before this Monday: corrections to the week just gone are
+    # normal (an absence entered after the fact), and a forward-only window never saw
+    # them - Taras's ADV of 16 Nov was still showing his old shift ten days later, and
+    # the HR export for that week was built from the stale figure.
+    start = monday - datetime.timedelta(days=weeks_back * 7)
+    window = [start + datetime.timedelta(days=i) for i in range((weeks + weeks_back) * 7)]
 
     with m.app.app_context():
         columns = db.query("SELECT id, position, label, user_id, retired "
@@ -185,11 +229,12 @@ def run_import(weeks=8, dry_run=False, force=False, year=None, today=None):
                     warnings.append("%s: somebody has the master workbook open in Excel, so it "
                                     "could not be read - those dates were left untouched" % y)
                 else:
-                    warnings.append("could not read the %s workbook (%s: %s)"
+                    warnings.append("the %s workbook could not be read (%s: %s)"
                                     % (y, type(e).__name__, text))
                 continue
             if data[:4] != b"PK\x03\x04":
-                warnings.append("the %s workbook is still protected/encrypted - cannot read it" % y)
+                warnings.append("the %s workbook is still protected/encrypted, so it "
+                                "could not be read" % y)
                 continue
             vals = openpyxl.load_workbook(io.BytesIO(data), data_only=True)
             sty = openpyxl.load_workbook(io.BytesIO(data))
@@ -308,12 +353,22 @@ def run_import(weeks=8, dry_run=False, force=False, year=None, today=None):
                     % (changed, total_cells, len(planned), overwritten, existing),
                     warnings, detail)
 
-        notified = []
+        notified, restated = [], []
         for iso, rows in planned:
-            _, n, _, _ = schedule_io.apply_week(iso, rows, columns, now_iso, today_iso)
+            c, n, _, _ = schedule_io.apply_week(iso, rows, columns, now_iso, today_iso)
             for x in n:
                 if x not in notified:
                     notified.append(x)
+            # A change to a week HR has already been given means their workbook is now
+            # out of date. Nobody would notice otherwise: the export never overwrites a
+            # delivered file, so the stale one just sits there.
+            if c and iso and iso[-1] < today_iso:
+                wk = datetime.date.fromisoformat(iso[0]).isocalendar()
+                if _already_exported(wk[0], wk[1]):
+                    restated.append("W%d %d" % (wk[1], wk[0]))
+        if restated:
+            warnings.append("the roster changed for %s, which HR has already been sent - "
+                            "re-run the hours export for those week(s)" % ", ".join(restated))
         summary = ("Imported %d weeks from the master file: %d cells changed%s."
                    % (len(planned), changed,
                       ("; shift change flagged to " + ", ".join(notified)) if notified else ""))
@@ -324,14 +379,24 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--dry-run", action="store_true", help="report what would change, write nothing")
     ap.add_argument("--weeks", type=int, default=8, help="weeks to import from this Monday (default 8)")
+    ap.add_argument("--weeks-back", type=int, default=WEEKS_BACK,
+                    help="weeks of the recent past to re-read, for late corrections "
+                         "(default %d)" % WEEKS_BACK)
     ap.add_argument("--year", type=int, help="force a single workbook year")
     ap.add_argument("--start", help="YYYY-MM-DD: import from the Monday of this week "
                                     "instead of the current one (for backfilling)")
     ap.add_argument("--force", action="store_true", help="bypass the safety gate")
+    ap.add_argument("--only-if-needed", action="store_true",
+                    help="do nothing unless the last run was refused or could not read "
+                         "some dates (for an hourly retry)")
     a = ap.parse_args()
+    if a.only_if_needed and not last_run_incomplete():
+        print("Nothing to retry: the last import read the whole roster.")
+        return 0
     start = datetime.datetime.strptime(a.start, "%Y-%m-%d").date() if a.start else None
     ok, summary, warnings, detail = run_import(weeks=a.weeks, dry_run=a.dry_run,
-                                               force=a.force, year=a.year, today=start)
+                                               force=a.force, year=a.year, today=start,
+                                               weeks_back=a.weeks_back)
     if not a.dry_run:
         # Record refusals and failures too - a blocked import must be visible on
         # the Schedule page, not just in cron's mail.

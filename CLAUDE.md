@@ -163,6 +163,17 @@ not affect the live site.
   if it would overwrite more than `MAX_OVERWRITE_FRACTION` of the shifts *already* stored
   (counting overwrites, not changes — the first import legitimately fills everything).
   Every run, including a refusal, is recorded in `import_runs` and shown on `/schedule`.
+  The window reaches **`WEEKS_BACK` (9) weeks back** as well as 8 forward: rosters here are
+  adjusted well after the fact, and a forward-only window never saw those edits (Taras's
+  ADV of 16 Nov was still showing his old shift ten days later, and the HR export for that
+  week was built from the stale figure). Past dates never raise the operator banner -
+  `apply_week()` only notifies from today onward. When a change lands in a week HR has
+  already been sent, the run says so and names the week, because the export never
+  overwrites a delivered file.
+  A failed read is **retried hourly** by cron with `--only-if-needed`, which exits without
+  touching the share unless the last recorded run was refused or left dates unread
+  (`last_run_incomplete()`, keyed on `INCOMPLETE_MARK` in the warnings) - the master is
+  usually only locked for minutes, so an unconditional hourly run would just be noise.
   **A day with no readable source is skipped, never written blank.** If a year's workbook
   cannot be read (someone has the master open in Excel - SMB takes a deny-read lock) or a
   date has no row in the sheet, those dates are left untouched and warned about. Treating
