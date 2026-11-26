@@ -371,7 +371,7 @@ def create_app():
     def hr_rates():
         """The only page the HR login needs: each operator's hourly rate."""
         rows = db.query(
-            "SELECT u.id, u.display_name, p.rate, p.updated_at, p.updated_by "
+            "SELECT u.id, u.display_name, u.on_payroll, p.rate, p.updated_at, p.updated_by "
             "FROM users u LEFT JOIN pay_rates p ON p.user_id = u.id "
             "WHERE u.role='technician' AND u.active=1 ORDER BY u.display_name")
         import hr_export
@@ -415,6 +415,11 @@ def create_app():
         saved, bad = 0, []
         for u in db.query("SELECT id, display_name FROM users "
                           "WHERE role='technician' AND active=1"):
+            # An unticked checkbox posts nothing, so absence means "off payroll" -
+            # but only because the form always lists every operator.
+            on = 1 if request.form.get("payroll_%d" % u["id"]) else 0
+            db.execute("UPDATE users SET on_payroll=%s WHERE id=%s", (on, u["id"]))
+
             raw = (request.form.get("rate_%d" % u["id"]) or "").strip().replace(",", ".")
             if raw == "":
                 continue

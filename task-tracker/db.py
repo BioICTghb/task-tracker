@@ -175,6 +175,11 @@ def _sqlite_init_schema(conn):
         # Last time an operator acknowledged seeing their schedule. Changes with
         # updated_at newer than this raise the "your schedule changed" banner.
         "ALTER TABLE users ADD COLUMN schedule_seen_at TEXT",
+        # 0 = on the roster but not paid through the weekly hours export (an agency
+        # worker, say). Deliberately separate from "has no rate set": a missing rate
+        # is a mistake worth warning about, while this is a decision. Defaults to 1,
+        # so nobody drops off payroll unless somebody says so.
+        "ALTER TABLE users ADD COLUMN on_payroll INTEGER NOT NULL DEFAULT 1",
     ):
         try:
             conn.execute(ddl)

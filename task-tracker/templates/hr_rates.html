@@ -14,7 +14,8 @@
 <form method="post" action="/hr/rates">
   <table class="table align-middle" style="max-width:40rem">
     <thead class="table-light">
-      <tr><th>Operator</th><th style="width:10rem">Rate / hour</th><th>Last changed</th></tr>
+      <tr><th>Operator</th><th style="width:10rem">Rate / hour</th>
+          <th style="width:7rem">On payroll</th><th>Last changed</th></tr>
     </thead>
     <tbody>
       {% for o in operators %}
@@ -26,6 +27,15 @@
             {# Left blank = unchanged, so a half-filled form can't wipe a rate. #}
             <input name="rate_{{ o.id }}" value="{{ '%.2f'|format(o.rate) if o.rate is not none else '' }}"
                    class="form-control" inputmode="decimal" placeholder="—">
+          </div>
+        </td>
+        <td>
+          {# Unticked posts nothing; the form lists everyone, so absence means off. #}
+          <div class="form-check">
+            <input class="form-check-input" type="checkbox" name="payroll_{{ o.id }}"
+                   value="1" id="payroll_{{ o.id }}" {{ 'checked' if o.on_payroll }}>
+            <label class="form-check-label small text-muted" for="payroll_{{ o.id }}">
+              {{ 'paid' if o.on_payroll else 'not paid' }}</label>
           </div>
         </td>
         <td class="small text-muted">
@@ -67,7 +77,9 @@
 </p>
 
 <p class="text-muted small mt-3">
-  An empty box leaves that rate as it was. Operators never see this page, and the rates do
-  not appear anywhere else in the app.
+  An empty box leaves that rate as it was. Unticking <strong>On payroll</strong> keeps
+  someone on the roster and in the planning but leaves them out of the export entirely —
+  use it for anyone paid another way, rather than clearing their rate. Operators never see
+  this page, and the rates do not appear anywhere else in the app.
 </p>
 {% endblock %}

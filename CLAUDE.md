@@ -176,6 +176,12 @@ not affect the live site.
   a dead share never costs the week's figures. Column D (overtime ×1.5) is deliberately
   left empty for HR; a paid absence goes to column E at `ABSENCE_DAY_HOURS` with its code
   in column K. A missing rate leaves `Rate` **blank, not 0**, and warns by name.
+  `users.on_payroll` (ticked per operator on `/hr/rates`) leaves someone out of the export
+  entirely while keeping them on the roster and in the planning — for anyone paid another
+  way. It is deliberately **not** the same as having no rate: a missing rate is a mistake
+  worth warning about, this is a decision, so don't collapse the two. It defaults to 1, and
+  an unticked checkbox posts nothing, which only reads as "off" because the form always
+  lists every operator.
   The workbook is **not built from scratch**: it fills in `hr_template.xlsx`, a copy of
   HR's own file with the names, hours and wages stripped and nothing else touched, so the
   layout, colours, borders, widths and the two-decimal accounting formats are theirs and

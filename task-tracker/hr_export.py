@@ -163,7 +163,8 @@ def build_rows(monday):
         colors = {r["hex"]: r["label"]
                   for r in db.query("SELECT hex, label FROM shift_colors")}
         cols = db.query(
-            "SELECT c.position, c.label, c.user_id, c.retired, u.display_name, p.rate "
+            "SELECT c.position, c.label, c.user_id, c.retired, u.display_name, "
+            "u.on_payroll, p.rate "
             "FROM schedule_columns c "
             "LEFT JOIN users u ON u.id = c.user_id "
             "LEFT JOIN pay_rates p ON p.user_id = c.user_id "
@@ -181,6 +182,10 @@ def build_rows(monday):
         for c in cols:
             # A retired column, or one with nobody linked, is not somebody to pay.
             if c["retired"] or not c["user_id"]:
+                continue
+            # Off payroll: still rostered and still planned around, just not paid
+            # through this export. No rate warning either - that is the point.
+            if not c["on_payroll"]:
                 continue
             if c["rate"] is None:
                 warnings.append("%s has no hourly rate set - hours exported, Cost will be 0"
